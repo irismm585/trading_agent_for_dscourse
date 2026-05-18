@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm -f \"D:/ISTM作业/term3/data science in practice/project/TradingAgents-main/a-share-trading-agents/.mcp.json\")",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(cmd.exe /c \"del /f \\\\\"D:\\\\ISTM作业\\\\term3\\\\data science in practice\\\\project\\\\TradingAgents-main\\\\a-share-trading-agents\\\\.mcp.json\\\\\"\")",
+      "Bash(python -c \"from backend.main import app; print\\('Backend OK'\\)\")",
+      "Bash(npx tsc *)",
+      "Bash(npm run *)"
+    ]
+  }
+}

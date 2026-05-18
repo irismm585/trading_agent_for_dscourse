@@ -1,0 +1,19 @@
+[project]
+name = "a-share-trading-agents"
+version = "0.1.0"
+description = "Simplified A-Share Trading Agents - Multi-agent LLM financial analysis web app"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "langgraph>=0.4.8",
+    "langchain-core>=0.3.81",
+    "langchain-openai>=0.3.23",
+    "pydantic>=2.0.0",
+    "akshare>=1.16.0",
+    "stockstats>=0.6.5",
+    "yfinance>=0.2.0",
+    "numpy>=1.24.0",
+    "pandas>=2.3.0",
+    "python-dotenv>=1.0.0",
+]
