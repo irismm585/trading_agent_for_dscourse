@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from backend.session.manager import session_manager
 from backend.config import get_config
+from backend.data_layer.mock_data import get_mock_search_results
 
 router = APIRouter()
 
@@ -36,6 +37,7 @@ class CreateSessionRequest(BaseModel):
     deep_think_llm: str = Field(default="deepseek-v4-pro", description="Model for Judge")
     quick_think_llm: str = Field(default="deepseek-v4-flash", description="Model for other agents")
     backend_url: str | None = Field(default=None, description="Custom LLM backend URL")
+    name: str | None = Field(default=None, description="Stock name (from frontend search)")
 
 
 class CreateSessionResponse(BaseModel):
@@ -115,6 +117,7 @@ async def create_session(request: CreateSessionRequest):
         "quick_think_llm": request.quick_think_llm,
         "backend_url": request.backend_url,
         "market": market,
+        "name": request.name or "",
     }
 
     session = session_manager.create(
@@ -244,6 +247,11 @@ async def get_current_config():
 
 def _search_cn_stocks(query: str, limit: int = 10) -> list[dict]:
     """Search A-share stocks by code or name via pytdx."""
+    # Mock mode — return simulated results
+    config = get_config()
+    if config.get("mock_data", False):
+        return get_mock_search_results(query, "cn")
+
     results = []
     q = query.strip().lower()
     try:
@@ -295,6 +303,11 @@ def _search_cn_stocks(query: str, limit: int = 10) -> list[dict]:
 
 def _search_us_stocks(query: str, limit: int = 10) -> list[dict]:
     """Search US stocks by symbol or name via yfinance."""
+    # Mock mode — return simulated results
+    config = get_config()
+    if config.get("mock_data", False):
+        return get_mock_search_results(query, "us")
+
     results = []
     q = query.strip().lower()
     try:

@@ -82,6 +82,7 @@ SECTION_PROMPTS: dict[str, dict] = {
 ---
 {sentiment_text}
 {news_text}
+{search_text}
 ---
 
 请严格按照以下结构撰写（以 `## 市场情绪分析` 开头）：
@@ -101,6 +102,7 @@ SECTION_PROMPTS: dict[str, dict] = {
 
 ---
 {news_text}
+{search_text}
 ---
 
 请严格按照以下结构撰写（以 `## 新闻资讯` 开头）：
@@ -124,6 +126,7 @@ SECTION_PROMPTS: dict[str, dict] = {
 {financial_text}
 {news_text}
 {sentiment_text}
+{search_text}
 ---
 
 请撰写一份2-3句话的总体摘要，总结核心发现。报告应客观中立，不给出买卖建议。""",
@@ -151,6 +154,7 @@ def _build_prompt(section_key: str, symbol: str, trade_date: str, data_bundle: d
         financial_text=_fmt("financial_text"),
         news_text=_fmt("news_text", "暂无相关新闻数据"),
         sentiment_text=_fmt("sentiment_text", "暂无市场情绪数据"),
+        search_text=_fmt("search_text", ""),
     )
 
 

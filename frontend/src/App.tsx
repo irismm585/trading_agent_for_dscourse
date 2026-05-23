@@ -5,6 +5,7 @@ import StockInput from './components/StockInput'
 import RatingBadge from './components/RatingBadge'
 import ChartView from './components/ChartView'
 import StockProfileBar from './components/StockProfileBar'
+import FinancialMetrics from './components/FinancialMetrics'
 import { SECTION_KEY_MAP } from './constants/tabs'
 import { simpleMarkdown } from './utils/markdown'
 import './App.css'
@@ -39,6 +40,7 @@ export default function App() {
     chartData,
     stockProfile,
     indexData,
+    financialData,
     connect,
     disconnect,
     sendCommand,
@@ -185,6 +187,15 @@ export default function App() {
         {meta.rawKeys.map(key => {
           const text = sectionContent[key]
           if (!text) return null
+          // Financial section: show charts instead of raw text
+          if (key === 'raw_financial_text' && financialData) {
+            return (
+              <div key={key} className="raw-block">
+                <FinancialMetrics data={financialData} />
+              </div>
+            )
+          }
+          // Technical section: show candlestick chart
           if (key === 'raw_ohlcv_text' && chartData.length > 0) {
             return (
               <div key={key} className="raw-block">

@@ -18,6 +18,7 @@ interface Props {
 }
 
 const PROVIDERS = [
+  { value: 'openrouter', label: 'OpenRouter' },
   { value: 'deepseek', label: 'DeepSeek' },
   { value: 'openai', label: 'OpenAI' },
   { value: 'xai', label: 'xAI (Grok)' },
@@ -33,6 +34,7 @@ export default function StockInput({ onStart, onMarketChange, disabled, hasSessi
   const [showDropdown, setShowDropdown] = useState(false)
   const [searching, setSearching] = useState(false)
   const [selectedLabel, setSelectedLabel] = useState('')
+  const [selectedName, setSelectedName] = useState('')
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
   const dropdownRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -40,9 +42,9 @@ export default function StockInput({ onStart, onMarketChange, disabled, hasSessi
   const [tradeDate, setTradeDate] = useState(
     new Date().toISOString().split('T')[0]
   )
-  const [llmProvider, setLlmProvider] = useState('deepseek')
-  const [deepThinkLlm, setDeepThinkLlm] = useState('deepseek-v4-pro')
-  const [quickThinkLlm, setQuickThinkLlm] = useState('deepseek-v4-flash')
+  const [llmProvider, setLlmProvider] = useState('openrouter')
+  const [deepThinkLlm, setDeepThinkLlm] = useState('google/gemma-3-27b-it:free')
+  const [quickThinkLlm, setQuickThinkLlm] = useState('google/gemma-3-27b-it:free')
   const [maxRounds, setMaxRounds] = useState(1)
   const [showAdvanced, setShowAdvanced] = useState(false)
 
@@ -91,6 +93,7 @@ export default function StockInput({ onStart, onMarketChange, disabled, hasSessi
 
   const handleSelectResult = (result: SearchResult) => {
     setSymbol(result.symbol)
+    setSelectedName(result.name)
     setSelectedLabel(`${result.name} (${result.symbol})`)
     setShowDropdown(false)
     setSearchResults([])
@@ -113,6 +116,7 @@ export default function StockInput({ onStart, onMarketChange, disabled, hasSessi
       llm_provider: llmProvider,
       deep_think_llm: deepThinkLlm,
       quick_think_llm: quickThinkLlm,
+      name: selectedName || undefined,
     })
   }
 
@@ -121,6 +125,7 @@ export default function StockInput({ onStart, onMarketChange, disabled, hasSessi
     onMarketChange?.(newMarket)
     setSymbol(newMarket === 'cn' ? '600519' : 'AAPL')
     setSelectedLabel('')
+    setSelectedName('')
     setSearchResults([])
     setShowDropdown(false)
   }

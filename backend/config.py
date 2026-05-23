@@ -16,6 +16,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_debate_rounds": 1,
     "output_language": "Chinese",
 
+    # Mock data mode
+    "mock_data": False,
+
     # Output settings
     "report_dir": "./reports",
 }
@@ -43,6 +46,7 @@ def load_config() -> dict[str, Any]:
         "backend_url": "TRADINGAGENTS_LLM_BACKEND_URL",
         "max_debate_rounds": "TRADINGAGENTS_MAX_DEBATE_ROUNDS",
         "output_language": "TRADINGAGENTS_OUTPUT_LANGUAGE",
+        "mock_data": "TRADINGAGENTS_MOCK_DATA",
     }
 
     for key, env_var in env_overrides.items():

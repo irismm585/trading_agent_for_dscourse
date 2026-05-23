@@ -7,6 +7,7 @@ export interface AnalysisRequest {
   deep_think_llm: string
   quick_think_llm: string
   backend_url?: string
+  name?: string
 }
 
 export interface CreateSessionResponse {
@@ -30,6 +31,7 @@ export type ReportSection =
   | 'raw_financial_text'
   | 'raw_news_text'
   | 'raw_sentiment_text'
+  | 'raw_search_text'
   | 'debate'
   | 'decision'
 
@@ -62,7 +64,7 @@ export interface IndexData {
 
 // WebSocket messages FROM server
 export interface WebSocketMessage {
-  type: 'connected' | 'node_update' | 'status' | 'section_complete' | 'complete' | 'error' | 'chart_data' | 'stock_profile'
+  type: 'connected' | 'node_update' | 'status' | 'section_complete' | 'complete' | 'error' | 'chart_data' | 'stock_profile' | 'financial_data'
   node?: 'DataCollector' | 'BullAgent' | 'BearAgent' | 'JudgeAgent'
   section?: ReportSection | string
   content?: string

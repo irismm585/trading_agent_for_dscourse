@@ -215,6 +215,119 @@ def get_financial_data(symbol: str, market: str = "cn") -> dict:
         return _us_financial(symbol)
 
 
+def extract_key_metrics(data: dict) -> dict:
+    """Extract key financial metrics as a clean JSON structure for frontend charts.
+
+    Returns a dict with:
+      - metrics: dict of standardised key -> {label, value, unit}
+      - revenueTrend: list of {period, value} for bar chart
+      - netProfitTrend: list of {period, value}
+    """
+    out: dict = {"metrics": {}, "revenueTrend": [], "netProfitTrend": []}
+    info = data.get("info") or {}
+
+    # -- Valuation / key indicators --
+    mapping = [
+        ("总市值", "marketCap", "总市值", 1e8),
+        ("marketCap", "marketCap", "总市值", 1e8),
+        ("流通市值", "circulatingMarketCap", "流通市值", 1e8),
+        ("市盈率-动态", "pe", "市盈率(动态)", 1),
+        ("trailingPE", "pe", "市盈率(TTM)", 1),
+        ("远期市盈率", "forwardPe", "远期市盈率", 1),
+        ("forwardPE", "forwardPe", "远期市盈率", 1),
+        ("市净率", "pb", "市净率", 1),
+        ("priceToBook", "pb", "市净率", 1),
+        ("净资产收益率", "roe", "净资产收益率(ROE)", 1),
+        ("returnOnEquity", "roe", "净资产收益率(ROE)", 1),
+        ("净利润率", "profitMargin", "净利润率", 1),
+        ("profitMargins", "profitMargin", "净利润率", 1),
+        ("毛利率", "grossMargin", "毛利率", 1),
+        ("grossMargins", "grossMargin", "毛利率", 1),
+        ("每股收益", "eps", "每股收益", 1),
+        ("trailingEps", "eps", "每股收益(TTM)", 1),
+        ("每股净资产", "navPerShare", "每股净资产", 1),
+        ("负债权益比", "debtToEquity", "负债权益比", 1),
+        ("debtToEquity", "debtToEquity", "负债权益比", 1),
+        ("营业收入", "revenue", "营业收入", 1e8),
+        ("totalRevenue", "revenue", "总营收", 1e4),
+        ("净利润", "netProfit", "净利润", 1e8),
+        ("股息率", "dividendYield", "股息率", 1),
+        ("dividendYield", "dividendYield", "股息率", 1),
+        ("Beta系数", "beta", "Beta系数", 1),
+        ("beta", "beta", "Beta系数", 1),
+        ("营收增长率", "revenueGrowth", "营收增长率", 1),
+        ("revenueGrowth", "revenueGrowth", "营收增长率", 1),
+        ("总资产收益率(ROA)", "roa", "总资产收益率(ROA)", 1),
+        ("returnOnAssets", "roa", "总资产收益率(ROA)", 1),
+    ]
+    for src_key, dst_key, label, factor in mapping:
+        val = info.get(src_key)
+        if val is not None:
+            display_val = val / factor if isinstance(val, (int, float)) and factor != 1 else val
+            if dst_key in ("roe", "profitMargin", "grossMargin", "dividendYield", "revenueGrowth", "roa"):
+                if isinstance(display_val, (int, float)):
+                    display_val = round(display_val * 100, 2)
+                    unit = "%"
+                else:
+                    unit = ""
+            elif dst_key in ("marketCap", "circulatingMarketCap", "revenue", "netProfit"):
+                unit = "亿"
+            elif dst_key in ("pe", "forwardPe", "pb", "debtToEquity", "beta"):
+                unit = ""
+                if isinstance(display_val, float):
+                    display_val = round(display_val, 2)
+            elif dst_key == "eps":
+                unit = "元"
+                if isinstance(display_val, float):
+                    display_val = round(display_val, 2)
+            else:
+                unit = ""
+
+            out["metrics"][dst_key] = {
+                "label": label,
+                "value": display_val,
+                "unit": unit,
+            }
+
+    # -- Revenue / profit trend from income statement --
+    income = data.get("income")
+    if income is not None and not income.empty:
+        try:
+            if "报表日期" in income.columns:
+                for _, row in income.iterrows():
+                    period = row.get("报表日期", "")
+                    if period:
+                        rev = row.get("营业收入")
+                        if rev is not None:
+                            out["revenueTrend"].append({"period": str(period)[:7], "value": float(rev) / 1e8})
+                        np_val = row.get("净利润")
+                        if np_val is not None:
+                            out["netProfitTrend"].append({"period": str(period)[:7], "value": float(np_val) / 1e8})
+            else:
+                try:
+                    rev_row = income.loc["Total Revenue"] if "Total Revenue" in income.index else None
+                except Exception:
+                    rev_row = None
+                if rev_row is not None:
+                    for col in income.columns[:8]:
+                        val = rev_row[col]
+                        if pd.notna(val):
+                            out["revenueTrend"].append({"period": str(col)[:7], "value": float(val) / 1e6})
+                try:
+                    np_row = income.loc["Net Income"] if "Net Income" in income.index else None
+                except Exception:
+                    np_row = None
+                if np_row is not None:
+                    for col in income.columns[:8]:
+                        val = np_row[col]
+                        if pd.notna(val):
+                            out["netProfitTrend"].append({"period": str(col)[:7], "value": float(val) / 1e6})
+        except Exception:
+            pass
+
+    return out
+
+
 def format_financial_summary(data: dict) -> str:
     """Format financial data as a Chinese summary string."""
     lines = ["### 财务数据"]

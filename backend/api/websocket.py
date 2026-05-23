@@ -45,6 +45,7 @@ RAW_SECTION_LABELS: dict[str, str] = {
     "raw_financial_text": "财务数据",
     "raw_news_text": "新闻原文",
     "raw_sentiment_text": "情绪原文",
+    "raw_search_text": "网络搜索",
 }
 
 
@@ -87,6 +88,7 @@ async def _handle_generate_section(websocket: WebSocket, session, section: str):
             "raw_financial_text": "financial_text",
             "raw_news_text": "news_text",
             "raw_sentiment_text": "sentiment_text",
+            "raw_search_text": "search_text",
         }
         for raw_key, bundle_key in bundle_map.items():
             text = data_bundle.get(bundle_key, "")
@@ -190,6 +192,7 @@ async def _handle_generate_raw_data(websocket: WebSocket, session):
             "raw_financial_text": "financial_text",
             "raw_news_text": "news_text",
             "raw_sentiment_text": "sentiment_text",
+            "raw_search_text": "search_text",
         }
 
         for raw_key, bundle_key in bundle_map.items():
@@ -468,6 +471,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         else:
             data_bundle = session._data_bundle
 
+        # Patch profile name from session config (passed from frontend search)
+        session_name = session.config.get("name", "")
+        if session_name:
+            profile = data_bundle.get("profile", {})
+            if profile:
+                profile["name"] = session_name
+
         # Log US data quality check
         if session.market == "us":
             ohlcv_ok = "无行情数据" not in data_bundle.get("ohlcv_text", "")
@@ -483,6 +493,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             "raw_financial_text": "financial_text",
             "raw_news_text": "news_text",
             "raw_sentiment_text": "sentiment_text",
+            "raw_search_text": "search_text",
         }
         for raw_key, bundle_key in bundle_map.items():
             text = data_bundle.get(bundle_key, "")
@@ -500,6 +511,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             await websocket.send_json({
                 "type": "chart_data",
                 "data": ohlcv_json,
+                "timestamp": datetime.now().isoformat(),
+            })
+
+        # Send structured financial metrics for frontend chart display
+        financial_metrics = data_bundle.get("financial_metrics")
+        if financial_metrics and financial_metrics.get("metrics"):
+            await websocket.send_json({
+                "type": "financial_data",
+                "data": financial_metrics,
                 "timestamp": datetime.now().isoformat(),
             })
 

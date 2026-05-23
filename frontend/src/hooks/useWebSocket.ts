@@ -11,6 +11,7 @@ export interface UseWebSocketReturn {
   chartData: OhlcvPoint[]            // OHLCV data for chart rendering
   stockProfile: StockProfile | null  // stock profile info
   indexData: IndexData | null        // market index data
+  financialData: any | null          // structured financial metrics
   connect: (sessionId: string) => void
   disconnect: () => void
   sendCommand: (command: WsCommand) => void
@@ -26,6 +27,7 @@ export function useWebSocket(): UseWebSocketReturn {
   const [chartData, setChartData] = useState<OhlcvPoint[]>([])
   const [stockProfile, setStockProfile] = useState<StockProfile | null>(null)
   const [indexData, setIndexData] = useState<IndexData | null>(null)
+  const [financialData, setFinancialData] = useState<any | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const commandQueueRef = useRef<WsCommand[]>([])
 
@@ -50,6 +52,7 @@ export function useWebSocket(): UseWebSocketReturn {
     setChartData([])
     setStockProfile(null)
     setIndexData(null)
+    setFinancialData(null)
     commandQueueRef.current = []
 
     // Close existing connection
@@ -102,6 +105,10 @@ export function useWebSocket(): UseWebSocketReturn {
         if (msg.type === 'stock_profile' && msg.profile) {
           setStockProfile(msg.profile)
           if (msg.index_data) setIndexData(msg.index_data)
+        }
+
+        if (msg.type === 'financial_data' && msg.data) {
+          setFinancialData(msg.data)
         }
 
         if (msg.type === 'complete') {
@@ -181,6 +188,7 @@ export function useWebSocket(): UseWebSocketReturn {
     chartData,
     stockProfile,
     indexData,
+    financialData,
     connect,
     disconnect,
     sendCommand,

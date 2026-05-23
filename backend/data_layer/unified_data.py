@@ -35,6 +35,7 @@ from backend.data_layer.stock_data import (
 from backend.data_layer.fundamental_data import (
     get_financial_data,
     format_financial_summary,
+    extract_key_metrics,
 )
 from backend.data_layer.news_data import (
     get_stock_news,
@@ -45,6 +46,12 @@ from backend.data_layer.sentiment_data import (
     get_social_sentiment,
     format_sentiment_summary,
 )
+from backend.data_layer.anysearch import (
+    search_stock_info,
+    format_search_summary,
+)
+from backend.config import get_config
+from backend.data_layer.mock_data import get_mock_data_bundle
 
 
 # ── Market-aware data fetchers ─────────────────────────────────────
@@ -314,6 +321,7 @@ def _fetch_us_bundle(symbol: str, start_date: str, trade_date: str, lookback_day
     except Exception as e:
         print(f"[unified_data] US financials error: {e}")
     fin_text = format_financial_text(financials, "us")
+    financial_metrics = extract_key_metrics(financials)
 
     # ═══════════════════════════════════════════════════
     # 4. NEWS (single attempt, 15s timeout — don't block on rate limits)
@@ -358,15 +366,35 @@ def _fetch_us_bundle(symbol: str, start_date: str, trade_date: str, lookback_day
     # ── 6. Index data ──
     index_data = _fetch_us_index_data()
 
+    # ═══════════════════════════════════════════════════
+    # 7. WEB SEARCH RESULTS (AnySearch — best-effort, 15s timeout)
+    # ═══════════════════════════════════════════════════
+    search_results = []
+    search_text = ""
+    try:
+        time.sleep(2)
+        search_results = _call_with_timeout(
+            lambda: search_stock_info(symbol, profile.get("name", ""), max_results=5),
+            timeout=15,
+        )
+        if search_results:
+            print(f"[unified_data] AnySearch OK for {symbol}: {len(search_results)} results")
+    except Exception as e:
+        print(f"[unified_data] AnySearch error for {symbol}: {e}")
+
+    if search_results:
+        search_text = format_search_summary(search_results, symbol)
+
     result = {
         "ohlcv_df": ohlcv_df, "ohlcv_json": ohlcv_json,
         "profile": profile, "index_data": index_data,
         "indicators": indicators, "fundamentals": financials,
         "stock_news": stock_news, "market_news": market_news,
-        "sentiment": sentiment,
+        "sentiment": sentiment, "search_results": search_results,
         "ohlcv_text": ohlcv_text, "indicators_text": ind_text,
         "financial_text": fin_text, "news_text": news_text,
-        "sentiment_text": sent_text, "market": "us",
+        "sentiment_text": sent_text, "search_text": search_text,
+        "financial_metrics": financial_metrics, "market": "us",
     }
 
     # Cache it
@@ -396,6 +424,15 @@ def fetch_all_data(symbol: str, trade_date: str, market: str = "cn", lookback_da
     Uses TTL cache to avoid redundant data calls within the same session.
     For US stocks, uses a single yfinance ticker with delays to avoid rate limiting.
     """
+    # Mock mode — return simulated data, bypass all external APIs
+    config = get_config()
+    if config.get("mock_data", False):
+        print(f"[unified_data] MOCK MODE enabled, returning simulated data for {symbol}")
+        result = get_mock_data_bundle(symbol, trade_date, market)
+        cache_key = f"{symbol}:{market}:{trade_date}"
+        data_cache.set(cache_key, result)
+        return result
+
     cache_key = f"{symbol}:{market}:{trade_date}"
 
     # Check cache
@@ -434,6 +471,7 @@ def fetch_all_data(symbol: str, trade_date: str, market: str = "cn", lookback_da
     # Fundamentals
     fundamentals = get_fundamentals(symbol, market)
     fin_text = format_financial_text(fundamentals, market)
+    financial_metrics = extract_key_metrics(fundamentals)
 
     # News
     stock_news = get_news_data(symbol, market)
@@ -456,7 +494,7 @@ def fetch_all_data(symbol: str, trade_date: str, market: str = "cn", lookback_da
         "sentiment": sentiment,
         "ohlcv_text": ohlcv_text, "indicators_text": ind_text,
         "financial_text": fin_text, "news_text": news_text,
-        "sentiment_text": sent_text, "market": market,
+        "sentiment_text": sent_text, "financial_metrics": financial_metrics, "market": market,
     }
 
     data_cache.set(cache_key, result)
