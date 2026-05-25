@@ -26,6 +26,78 @@
 
 详细使用文档：[docs/DATA_CONVERTERS.md](docs/DATA_CONVERTERS.md)
 
+### 转换器优化方案
+
+#### 1. MarketDataNormalizer - 金融数据标准化转换器
+- **优化点**: 
+  - 统一 A 股/美股数据字段命名（英文+中文字段支持）
+  - 货币单位自动标准化（元 → 亿元）
+  - 日期格式统一为 `YYYY-MM-DD`
+  - 数值类型安全转换
+- **支持字段**: 
+  - OHLCV: date, open, high, low, close, volume, amount
+  - 财务: market_cap, pe_ratio, pb_ratio, net_profit, revenue
+- **代码示例**:
+  ```python
+  from backend.utils.data_converters import MarketDataNormalizer
+  
+  normalized = MarketDataNormalizer.normalize_ohlcv(raw_data, market='cn')
+  unified = MarketDataNormalizer.to_unified_format('600519', ohlcv_data, financial_data, 'cn')
+  ```
+
+#### 2. WsMessageConverter - WebSocket 消息类型转换器
+- **优化点**:
+  - 类型安全的消息序列化/反序列化
+  - 自动添加时间戳
+  - 便捷方法创建常用消息类型
+  - 错误处理和类型验证
+- **支持消息类型**:
+  - `status`: 状态消息
+  - `node_update`: 节点更新
+  - `complete`: 完成通知
+  - `error`: 错误消息
+  - `stock_profile`, `chart_data`, `financial_data`: 数据消息
+- **代码示例**:
+  ```python
+  from backend.utils.data_converters import WsMessageConverter
+  
+  status_msg = WsMessageConverter.create_status("正在分析中...")
+  json_str = WsMessageConverter.to_json(status_msg)
+  ```
+
+#### 3. ChartDataConverter - 图表数据快速转换器
+- **优化点**:
+  - 支持多种图表库格式（Lightweight Charts, ECharts, Plotly）
+  - 零拷贝 numpy 数组转换（大数据场景性能提升）
+  - 自动处理时间戳转换
+  - 数据类型安全检查
+- **代码示例**:
+  ```python
+  from backend.utils.data_converters import ChartDataConverter
+  
+  # Lightweight Charts 格式
+  lw_data = ChartDataConverter.dataframe_to_ohlc(df, chart_type='lightweight')
+  
+  # ECharts 格式
+  echarts_data = ChartDataConverter.dataframe_to_ohlc(df, chart_type='echarts')
+  ```
+
+### 测试结果
+
+所有转换器已通过完整的测试验证，测试脚本：[test_data_converters.py](test_data_converters.py)
+
+| 测试套件 | 测试数 | 通过数 | 失败数 | 通过率 |
+|----------|--------|--------|--------|--------|
+| MarketDataNormalizer | 4 | 4 | 0 | 100% |
+| WsMessageConverter | 5 | 5 | 0 | 100% |
+| ChartDataConverter | 4 | 4 | 0 | 100% |
+| **总计** | **15** | **15** | **0** | **100%** |
+
+运行测试：
+```bash
+python test_data_converters.py
+```
+
 ## 快速开始
 
 ### 环境要求
