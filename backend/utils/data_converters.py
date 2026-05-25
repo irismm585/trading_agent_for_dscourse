@@ -6,14 +6,19 @@
 2. WsMessageConverter - WebSocket 消息类型转换器
 3. ChartDataConverter - 图表数据快速转换器
 4. LLMResponseParser - LLM响应解析器
+5. TypeSafeDecorators - 类型安全装饰器（方案4）
+6. CacheDecorators - 性能优化缓存装饰器（方案5）
+7. BatchDataValidator - 批量数据验证器（方案7）
 """
 
 from __future__ import annotations
 
 import json
 import re
+import hashlib
+import functools
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import pandas as pd
 import numpy as np
 
@@ -966,3 +971,452 @@ class LLMResponseParser:
             result['macd_signal'] = macd_match.group(1).strip()
         
         return result
+
+
+# =============================================================================
+# 5. 类型安全装饰器（方案4）
+# =============================================================================
+class TypeSafeDecorators:
+    """类型安全装饰器集合
+    
+    功能：
+    - 参数类型检查
+    - 返回值类型验证
+    - 自动类型转换
+    - 参数范围验证
+    """
+    
+    @staticmethod
+    def validate_types(**type_specs):
+        """参数类型验证装饰器
+        
+        Args:
+            **type_specs: 参数名 -> 类型 的映射
+            
+        Example:
+            @TypeSafeDecorators.validate_types(data=pd.DataFrame, market=str)
+            def process_data(data, market):
+                pass
+        """
+        def decorator(func: Callable) -> Callable:
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                import inspect
+                sig = inspect.signature(func)
+                bound_args = sig.bind(*args, **kwargs)
+                bound_args.apply_defaults()
+                
+                for param_name, expected_type in type_specs.items():
+                    if param_name in bound_args.arguments:
+                        value = bound_args.arguments[param_name]
+                        if not isinstance(value, expected_type):
+                            raise TypeError(
+                                f"Parameter '{param_name}' should be {expected_type.__name__}, "
+                                f"got {type(value).__name__}"
+                            )
+                
+                return func(*args, **kwargs)
+            return wrapper
+        return decorator
+    
+    @staticmethod
+    def validate_return(expected_type: type):
+        """返回值类型验证装饰器
+        
+        Args:
+            expected_type: 期望的返回值类型
+        """
+        def decorator(func: Callable) -> Callable:
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                result = func(*args, **kwargs)
+                if not isinstance(result, expected_type):
+                    raise TypeError(
+                        f"Function should return {expected_type.__name__}, "
+                        f"got {type(result).__name__}"
+                    )
+                return result
+            return wrapper
+        return decorator
+    
+    @staticmethod
+    def validate_in_set(param_name: str, valid_values: Set[Any]):
+        """参数值范围验证装饰器
+        
+        Args:
+            param_name: 要验证的参数名
+            valid_values: 允许的取值集合
+        """
+        def decorator(func: Callable) -> Callable:
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                import inspect
+                sig = inspect.signature(func)
+                bound_args = sig.bind(*args, **kwargs)
+                bound_args.apply_defaults()
+                
+                if param_name in bound_args.arguments:
+                    value = bound_args.arguments[param_name]
+                    if value not in valid_values:
+                        raise ValueError(
+                            f"Parameter '{param_name}' should be one of {valid_values}, "
+                            f"got {value}"
+                        )
+                
+                return func(*args, **kwargs)
+            return wrapper
+        return decorator
+    
+    @staticmethod
+    def auto_convert(**converters):
+        """自动类型转换装饰器
+        
+        Args:
+            **converters: 参数名 -> 转换函数 的映射
+            
+        Example:
+            @TypeSafeDecorators.auto_convert(value=float)
+            def process(value):
+                pass
+        """
+        def decorator(func: Callable) -> Callable:
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                import inspect
+                sig = inspect.signature(func)
+                bound_args = sig.bind(*args, **kwargs)
+                bound_args.apply_defaults()
+                
+                for param_name, converter in converters.items():
+                    if param_name in bound_args.arguments:
+                        try:
+                            bound_args.arguments[param_name] = converter(
+                                bound_args.arguments[param_name]
+                            )
+                        except (ValueError, TypeError) as e:
+                            raise TypeError(
+                                f"Could not convert parameter '{param_name}': {e}"
+                            )
+                
+                return func(*bound_args.args, **bound_args.kwargs)
+            return wrapper
+        return decorator
+
+
+# =============================================================================
+# 6. 性能优化缓存装饰器（方案5）
+# =============================================================================
+class CacheDecorators:
+    """性能优化缓存装饰器集合
+    
+    功能：
+    - LRU 缓存装饰器
+    - TTL 缓存装饰器
+    - 结果缓存装饰器
+    - 基于参数哈希的缓存键生成
+    """
+    
+    _cache_store: Dict[str, Tuple[Any, float]] = {}
+    
+    @staticmethod
+    def cache_result(ttl_seconds: Optional[float] = None):
+        """结果缓存装饰器
+        
+        Args:
+            ttl_seconds: 缓存过期时间（秒），None表示永不过期
+        """
+        def decorator(func: Callable) -> Callable:
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                # 生成缓存键
+                key_parts = [func.__module__, func.__qualname__]
+                
+                # 处理位置参数
+                for arg in args:
+                    key_parts.append(CacheDecorators._hashable(arg))
+                
+                # 处理关键字参数（排序以确保一致性）
+                sorted_kwargs = sorted(kwargs.items())
+                for key, value in sorted_kwargs:
+                    key_parts.append(f"{key}={CacheDecorators._hashable(value)}")
+                
+                cache_key = "|".join(key_parts)
+                cache_key = hashlib.sha256(cache_key.encode()).hexdigest()
+                
+                # 检查缓存
+                if cache_key in CacheDecorators._cache_store:
+                    cached_value, expire_time = CacheDecorators._cache_store[cache_key]
+                    if ttl_seconds is None or (expire_time is None or datetime.now().timestamp() < expire_time):
+                        return cached_value
+                
+                # 执行函数
+                result = func(*args, **kwargs)
+                
+                # 存储到缓存
+                expire_time = None if ttl_seconds is None else datetime.now().timestamp() + ttl_seconds
+                CacheDecorators._cache_store[cache_key] = (result, expire_time)
+                
+                return result
+            return wrapper
+        return decorator
+    
+    @staticmethod
+    def _hashable(obj: Any) -> str:
+        """转换对象为可哈希的字符串"""
+        if isinstance(obj, pd.DataFrame):
+            # DataFrame 使用其字符串表示的哈希
+            return f"DF:{hashlib.md5(obj.to_csv(index=False).encode()).hexdigest()}"
+        elif isinstance(obj, np.ndarray):
+            # numpy 数组使用其数据哈希
+            return f"NP:{hashlib.md5(obj.tobytes()).hexdigest()}"
+        elif isinstance(obj, list):
+            # 列表递归处理
+            return f"LIST:[{','.join(CacheDecorators._hashable(x) for x in obj)}]"
+        elif isinstance(obj, dict):
+            # 字典排序后递归处理
+            sorted_items = sorted((str(k), CacheDecorators._hashable(v)) for k, v in obj.items())
+            return f"DICT:{{{','.join(f'{k}={v}' for k, v in sorted_items)}}}"
+        else:
+            return str(obj)
+    
+    @staticmethod
+    def clear_cache():
+        """清空所有缓存"""
+        CacheDecorators._cache_store.clear()
+    
+    @staticmethod
+    def cache_info():
+        """获取缓存统计信息
+        
+        Returns:
+            包含缓存大小等信息的字典
+        """
+        return {
+            'size': len(CacheDecorators._cache_store),
+            'keys': list(CacheDecorators._cache_store.keys())
+        }
+
+
+# =============================================================================
+# 7. 批量数据验证器（方案7）
+# =============================================================================
+class BatchDataValidator:
+    """批量数据验证器
+    
+    功能：
+    - 批量验证数据完整性
+    - 数据格式验证
+    - 范围检查
+    - 数据质量报告生成
+    """
+    
+    @staticmethod
+    def validate_ohlcv_data(df: pd.DataFrame, strict: bool = True) -> Dict[str, Any]:
+        """批量验证 OHLCV 数据
+        
+        Args:
+            df: 待验证的 DataFrame
+            strict: 是否严格模式（发现错误直接抛异常）
+            
+        Returns:
+            包含验证结果的字典
+        """
+        report = {
+            'total_rows': len(df),
+            'valid_rows': 0,
+            'invalid_rows': [],
+            'errors': [],
+            'warnings': []
+        }
+        
+        # 检查必要列
+        required_columns = ['date', 'open', 'high', 'low', 'close']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        
+        if missing_columns:
+            error_msg = f"Missing required columns: {missing_columns}"
+            report['errors'].append(error_msg)
+            if strict:
+                raise ValueError(error_msg)
+            return report
+        
+        # 验证每一行
+        for idx, row in df.iterrows():
+            row_errors = []
+            
+            # 检查日期
+            try:
+                pd.to_datetime(row['date'])
+            except (ValueError, TypeError):
+                row_errors.append(f"Invalid date: {row['date']}")
+            
+            # 检查 OHLC 数值
+            for col in ['open', 'high', 'low', 'close']:
+                try:
+                    val = float(row[col])
+                    if pd.isna(val):
+                        row_errors.append(f"{col} is NaN")
+                except (ValueError, TypeError):
+                    row_errors.append(f"Invalid {col}: {row[col]}")
+            
+            # 检查 OHLC 逻辑
+            if not row_errors:
+                if float(row['high']) < float(row['low']):
+                    row_errors.append("High < Low")
+                if float(row['high']) < float(row['open']):
+                    row_errors.append("High < Open")
+                if float(row['high']) < float(row['close']):
+                    row_errors.append("High < Close")
+                if float(row['low']) > float(row['open']):
+                    row_errors.append("Low > Open")
+                if float(row['low']) > float(row['close']):
+                    row_errors.append("Low > Close")
+            
+            if row_errors:
+                report['invalid_rows'].append({
+                    'index': idx,
+                    'date': row['date'],
+                    'errors': row_errors
+                })
+            else:
+                report['valid_rows'] += 1
+        
+        # 检查 volume 列（如果有）
+        if 'volume' in df.columns:
+            invalid_volumes = df[df['volume'] < 0].index.tolist()
+            if invalid_volumes:
+                report['warnings'].append(f"Negative volume in rows: {invalid_volumes[:10]}")
+        
+        return report
+    
+    @staticmethod
+    def validate_financial_data(data: Dict[str, Any], strict: bool = True) -> Dict[str, Any]:
+        """批量验证财务数据
+        
+        Args:
+            data: 待验证的财务数据字典
+            strict: 是否严格模式
+            
+        Returns:
+            包含验证结果的字典
+        """
+        report = {
+            'valid': True,
+            'errors': [],
+            'warnings': []
+        }
+        
+        # 验证数值字段
+        numeric_fields = ['pe_ratio', 'pb_ratio', 'market_cap', 'net_profit', 'revenue']
+        
+        for field in numeric_fields:
+            if field in data and data[field] is not None:
+                try:
+                    val = float(data[field])
+                    if val < 0 and field not in ['net_profit']:
+                        report['warnings'].append(f"{field} has negative value: {val}")
+                except (ValueError, TypeError):
+                    error_msg = f"{field} is not a valid number: {data[field]}"
+                    report['errors'].append(error_msg)
+        
+        report['valid'] = len(report['errors']) == 0
+        
+        if strict and not report['valid']:
+            raise ValueError("Financial data validation failed: " + "; ".join(report['errors']))
+        
+        return report
+    
+    @staticmethod
+    def validate_dataframe_schema(df: pd.DataFrame, expected_schema: Dict[str, type], strict: bool = True) -> Dict[str, Any]:
+        """验证 DataFrame 模式
+        
+        Args:
+            df: 待验证的 DataFrame
+            expected_schema: 期望的列名 -> 类型 的映射
+            strict: 是否严格模式
+            
+        Returns:
+            包含验证结果的字典
+        """
+        report = {
+            'valid': True,
+            'missing_columns': [],
+            'type_mismatches': [],
+            'extra_columns': []
+        }
+        
+        # 检查缺失的列
+        for col, dtype in expected_schema.items():
+            if col not in df.columns:
+                report['missing_columns'].append(col)
+        
+        # 检查类型不匹配
+        for col, dtype in expected_schema.items():
+            if col in df.columns:
+                # 简单类型检查
+                sample = df[col].iloc[0] if len(df) > 0 else None
+                if sample is not None and not isinstance(sample, dtype):
+                    report['type_mismatches'].append({
+                        'column': col,
+                        'expected': dtype.__name__,
+                        'got': type(sample).__name__
+                    })
+        
+        # 检查额外的列
+        extra_cols = set(df.columns) - set(expected_schema.keys())
+        if extra_cols:
+            report['extra_columns'] = list(extra_cols)
+        
+        report['valid'] = len(report['missing_columns']) == 0 and len(report['type_mismatches']) == 0
+        
+        if strict and not report['valid']:
+            raise ValueError(f"Schema validation failed: {report}")
+        
+        return report
+    
+    @staticmethod
+    def generate_quality_report(df: pd.DataFrame) -> Dict[str, Any]:
+        """生成数据质量报告
+        
+        Args:
+            df: 待分析的 DataFrame
+            
+        Returns:
+            包含数据质量指标的字典
+        """
+        report = {
+            'row_count': len(df),
+            'column_count': len(df.columns),
+            'columns': list(df.columns),
+            'missing_values': {},
+            'duplicate_rows': 0,
+            'data_types': {},
+            'numeric_stats': {}
+        }
+        
+        # 检查缺失值
+        for col in df.columns:
+            missing = df[col].isna().sum()
+            report['missing_values'][col] = {
+                'count': int(missing),
+                'percentage': float(missing / len(df) * 100)
+            }
+        
+        # 检查重复行
+        report['duplicate_rows'] = int(df.duplicated().sum())
+        
+        # 获取数据类型
+        for col in df.columns:
+            report['data_types'][col] = str(df[col].dtype)
+        
+        # 数值列统计
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        for col in numeric_cols:
+            report['numeric_stats'][col] = {
+                'mean': float(df[col].mean()),
+                'min': float(df[col].min()),
+                'max': float(df[col].max()),
+                'median': float(df[col].median())
+            }
+        
+        return report
