@@ -19,6 +19,16 @@ import numpy as np
 
 
 # =============================================================================
+# 常量定义
+# =============================================================================
+# 图表类型
+CHART_TYPE_LIGHTWEIGHT = 'lightweight'
+CHART_TYPE_ECHARTS = 'echarts'
+CHART_TYPE_PLOTLY = 'plotly'
+VALID_CHART_TYPES = {CHART_TYPE_LIGHTWEIGHT, CHART_TYPE_ECHARTS, CHART_TYPE_PLOTLY}
+
+
+# =============================================================================
 # 1. 金融数据标准化转换器
 # =============================================================================
 class MarketDataNormalizer:
@@ -84,6 +94,12 @@ class MarketDataNormalizer:
         Returns:
             标准化后的 DataFrame
         """
+        # 验证市场类型
+        if market not in cls._FIELD_MAPPING:
+            raise ValueError(
+                f"Invalid market: {market}. Must be one of {list(cls._FIELD_MAPPING.keys())}"
+            )
+        
         if isinstance(data, dict):
             data = [data]
             
@@ -343,13 +359,13 @@ class ChartDataConverter:
     @staticmethod
     def dataframe_to_ohlc(
         df: pd.DataFrame,
-        chart_type: str = 'lightweight'
+        chart_type: str = CHART_TYPE_LIGHTWEIGHT
     ) -> List[Dict[str, Any]]:
         """DataFrame 转 OHLC 图表格式
         
         Args:
             df: OHLCV DataFrame
-            chart_type: 图表类型 ('lightweight', 'echarts', 'plotly')
+            chart_type: 图表类型 (CHART_TYPE_LIGHTWEIGHT, CHART_TYPE_ECHARTS, CHART_TYPE_PLOTLY)
             
         Returns:图表数据数组
         """
@@ -361,12 +377,16 @@ class ChartDataConverter:
         if not all(col in df.columns for col in required):
             return []
         
+        # 验证图表类型，默认使用 lightweight
+        if chart_type not in VALID_CHART_TYPES:
+            chart_type = CHART_TYPE_LIGHTWEIGHT
+        
         # 根据图表类型转换
-        if chart_type == 'lightweight':
+        if chart_type == CHART_TYPE_LIGHTWEIGHT:
             return ChartDataConverter._to_lightweight(df)
-        elif chart_type == 'echarts':
+        elif chart_type == CHART_TYPE_ECHARTS:
             return ChartDataConverter._to_echarts(df)
-        elif chart_type == 'plotly':
+        elif chart_type == CHART_TYPE_PLOTLY:
             return ChartDataConverter._to_plotly(df)
         else:
             return ChartDataConverter._to_lightweight(df)
@@ -493,7 +513,12 @@ class LLMResponseParser:
     - 专门针对金融分析场景优化
     """
     
-    # 评级映射
+    # 预编译的正则表达式模式
+    _JSON_BLOCK_PATTERN = re.compile(r'```(?:json)?\s*([\s\S]*?)\s*```')
+    _SINGLE_D_PATTERN = re.compile(r'D')  # 简化：移除所有D字符
+    _MULTIPLE_D_PATTERN = re.compile(r'D{2,}')
+    
+    # 评级映射（使用标准化的键，查找时统一转小写）
     RATING_MAPPING = {
         # 中文
         '买入': 'Buy',
@@ -502,9 +527,6 @@ class LLMResponseParser:
         '持有/观望': 'Hold',
         '卖出': 'Sell',
         # 英文
-        'Buy': 'Buy',
-        'Hold': 'Hold',
-        'Sell': 'Sell',
         'buy': 'Buy',
         'hold': 'Hold',
         'sell': 'Sell',
@@ -523,8 +545,7 @@ class LLMResponseParser:
         cleaned_text = cls._clean_dirty_text(text)
         
         # 匹配 ```json ... ``` 格式（可能有多个代码块）
-        pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
-        matches = re.findall(pattern, cleaned_text)
+        matches = cls._JSON_BLOCK_PATTERN.findall(cleaned_text)
         
         for json_candidate in matches:
             # 尝试修复JSON格式
@@ -554,10 +575,8 @@ class LLMResponseParser:
             
         Returns:清理后的文本
         """
-        # 移除单个D字符（乱码）
-        cleaned = re.sub(r'\bD\b', '', text)
-        # 移除多个连续的D字符
-        cleaned = re.sub(r'D+', '', cleaned)
+        # 移除所有D字符（乱码）
+        cleaned = cls._SINGLE_D_PATTERN.sub('', text)
         # 移除问号字符
         cleaned = re.sub(r'[�?]', '', cleaned)
         # 移除多余的空格和换行
@@ -778,15 +797,25 @@ class LLMResponseParser:
             return None
         
         rating_str = str(rating).strip()
+        rating_lower = rating_str.lower()
         
+        # 先尝试精确匹配中文
+        if rating_str in cls.RATING_MAPPING:
+            return cls.RATING_MAPPING[rating_str]
+        
+        # 再尝试匹配小写英文
+        if rating_lower in cls.RATING_MAPPING:
+            return cls.RATING_MAPPING[rating_lower]
+        
+        # 最后尝试子字符串匹配（优先中文，再英文）
         for key, value in cls.RATING_MAPPING.items():
-            if key in rating_str:
+            if key in rating_str or key in rating_lower:
                 return value
         
         # 如果没有匹配，尝试更宽松的匹配
-        if '买' in rating_str or 'Buy' in rating_str or 'buy' in rating_str:
+        if '买' in rating_str or 'buy' in rating_lower:
             return 'Buy'
-        elif '卖' in rating_str or 'Sell' in rating_str or 'sell' in rating_str:
+        elif '卖' in rating_str or 'sell' in rating_lower:
             return 'Sell'
         else:
             return 'Hold'
