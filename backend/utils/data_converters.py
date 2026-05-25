@@ -5,6 +5,7 @@
 1. MarketDataNormalizer - 金融数据标准化转换器
 2. WsMessageConverter - WebSocket 消息类型转换器
 3. ChartDataConverter - 图表数据快速转换器
+4. LLMResponseParser - LLM响应解析器
 """
 
 from __future__ import annotations
@@ -173,8 +174,7 @@ class MarketDataNormalizer:
             financial: 财务数据（可选）
             market: 市场类型
             
-        Returns:
-            统一格式的数据字典
+        Returns:统一格式的数据字典
         """
         normalized_ohlcv = cls.normalize_ohlcv(ohlcv, market)
         
@@ -218,8 +218,7 @@ class WsMessageConverter:
         Args:
             data: 要发送的数据字典
             
-        Returns:
-            JSON 字符串
+        Returns:JSON 字符串
         """
         # 确保有 type 字段
         if 'type' not in data:
@@ -245,8 +244,7 @@ class WsMessageConverter:
         Args:
             json_str: JSON 字符串
             
-        Returns:
-            解析后的字典
+        Returns:解析后的字典
         """
         try:
             data = json.loads(json_str)
@@ -353,8 +351,7 @@ class ChartDataConverter:
             df: OHLCV DataFrame
             chart_type: 图表类型 ('lightweight', 'echarts', 'plotly')
             
-        Returns:
-            图表数据数组
+        Returns:图表数据数组
         """
         if df.empty:
             return []
@@ -452,8 +449,7 @@ class ChartDataConverter:
             low_index: 最低价列索引
             close_index: 收盘价列索引
             
-        Returns:
-            图表数据数组
+        Returns:图表数据数组
         """
         result = []
         n = len(data)
@@ -480,5 +476,354 @@ class ChartDataConverter:
                 'low': float(row[low_index]),
                 'close': float(row[close_index]),
             })
+        
+        return result
+
+
+# =============================================================================
+# 4. LLM响应解析器
+# =============================================================================
+class LLMResponseParser:
+    """LLM响应解析器
+    
+    功能：
+    - 从LLM返回的非结构化文本中提取结构化数据
+    - 支持JSON代码块解析
+    - 支持多种数据格式的智能提取
+    - 专门针对金融分析场景优化
+    """
+    
+    # 评级映射
+    RATING_MAPPING = {
+        # 中文
+        '买入': 'Buy',
+        '持有': 'Hold',
+        '观望': 'Hold',
+        '持有/观望': 'Hold',
+        '卖出': 'Sell',
+        # 英文
+        'Buy': 'Buy',
+        'Hold': 'Hold',
+        'Sell': 'Sell',
+        'buy': 'Buy',
+        'hold': 'Hold',
+        'sell': 'Sell',
+    }
+    
+    @classmethod
+    def extract_json_from_markdown(cls, text: str) -> Optional[Dict[str, Any]]:
+        """从Markdown代码块中提取JSON
+        
+        Args:
+            text: 包含JSON代码块的文本
+            
+        Returns:解析后的JSON字典，失败返回None
+        """
+        # 匹配 ```json ... ``` 格式
+        pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+        match = re.search(pattern, text)
+        
+        if match:
+            try:
+                return json.loads(match.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+        
+        # 如果没有找到代码块，尝试直接解析整个文本
+        try:
+            return json.loads(text.strip())
+        except json.JSONDecodeError:
+            return None
+    
+    @classmethod
+    def extract_final_decision(cls, text: str) -> Dict[str, Any]:
+        """从LLM响应中提取最终投资决策
+        
+        Args:
+            text: LLM返回的文本
+            
+        Returns:包含rating、reasoning、key_risks等字段的字典
+        """
+        result = {
+            'rating': None,
+            'reasoning': None,
+            'key_risks': [],
+            'suggested_entry_price': None,
+            'suggested_holding_period': None,
+        }
+        
+        # 首先尝试从JSON代码块中提取
+        json_data = cls.extract_json_from_markdown(text)
+        if json_data:
+            return cls._parse_final_decision_from_json(json_data, result)
+        
+        # 如果JSON解析失败，尝试使用正则表达式提取
+        return cls._extract_final_decision_with_regex(text, result)
+    
+    @classmethod
+    def _parse_final_decision_from_json(
+        cls, 
+        json_data: Dict[str, Any], 
+        result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """从JSON数据中解析最终决策
+        
+        Args:
+            json_data: 解析后的JSON字典
+            result: 结果字典
+            
+        Returns:填充后的结果字典
+        """
+        # 提取评级
+        if 'rating' in json_data:
+            result['rating'] = cls._normalize_rating(json_data['rating'])
+        
+        # 提取理由
+        if 'reasoning' in json_data:
+            result['reasoning'] = json_data['reasoning']
+        elif 'reason' in json_data:
+            result['reasoning'] = json_data['reason']
+        
+        # 提取风险
+        if 'key_risks' in json_data:
+            risks = json_data['key_risks']
+            result['key_risks'] = cls._normalize_risks(risks)
+        
+        # 提取建议入场价
+        if 'suggested_entry_price' in json_data:
+            result['suggested_entry_price'] = cls._safe_float(json_data['suggested_entry_price'])
+        
+        # 提取建议持有周期
+        if 'suggested_holding_period' in json_data:
+            result['suggested_holding_period'] = json_data['suggested_holding_period']
+        
+        return result
+    
+    @classmethod
+    def _extract_final_decision_with_regex(
+        cls, 
+        text: str, 
+        result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """使用正则表达式从文本中提取最终决策
+        
+        Args:
+            text: 文本内容
+            result: 结果字典
+            
+        Returns:填充后的结果字典
+        """
+        # 提取评级
+        rating_match = re.search(
+            r'(?:最终评级|评级|rating)[：:]\s*([^\n]+)',
+            text
+        )
+        if rating_match:
+            result['rating'] = cls._normalize_rating(rating_match.group(1).strip())
+        
+        # 提取理由
+        reasoning_match = re.search(
+            r'(?:评判理由|理由|reasoning|reason)[：:]\s*([\s\S]*?)(?=\n\*\*|$)',
+            text
+        )
+        if reasoning_match:
+            result['reasoning'] = reasoning_match.group(1).strip()
+        
+        # 提取风险
+        risks_match = re.search(
+            r'(?:风险提示|主要风险|key_risks|key risks)[：:]\s*([\s\S]*?)(?=\n\*\*|$)',
+            text
+        )
+        if risks_match:
+            result['key_risks'] = cls._extract_risks_from_text(risks_match.group(1).strip())
+        
+        # 提取建议入场价
+        price_match = re.search(
+            r'(?:建议入场价|入场价|suggested_entry_price)[：:]\s*[^¥]?[¥]?\s*([\d.]+)',
+            text
+        )
+        if price_match:
+            result['suggested_entry_price'] = cls._safe_float(price_match.group(1))
+        
+        # 提取建议持有周期
+        period_match = re.search(
+            r'(?:建议持有周期|持有周期|suggested_holding_period)[：:]\s*([^\n]+)',
+            text
+        )
+        if period_match:
+            result['suggested_holding_period'] = period_match.group(1).strip()
+        
+        return result
+    
+    @classmethod
+    def _normalize_rating(cls, rating: Any) -> Optional[str]:
+        """标准化评级
+        
+        Args:
+            rating: 原始评级
+            
+        Returns:标准化后的评级 ('Buy', 'Hold', 'Sell') 或 None
+        """
+        if rating is None:
+            return None
+        
+        rating_str = str(rating).strip()
+        
+        for key, value in cls.RATING_MAPPING.items():
+            if key in rating_str:
+                return value
+        
+        # 如果没有匹配，尝试更宽松的匹配
+        if '买' in rating_str or 'Buy' in rating_str or 'buy' in rating_str:
+            return 'Buy'
+        elif '卖' in rating_str or 'Sell' in rating_str or 'sell' in rating_str:
+            return 'Sell'
+        else:
+            return 'Hold'
+    
+    @classmethod
+    def _normalize_risks(cls, risks: Any) -> List[str]:
+        """标准化风险列表
+        
+        Args:
+            risks: 原始风险数据（可以是列表、字符串或其他类型）
+            
+        Returns:标准化的风险字符串列表
+        """
+        if risks is None:
+            return []
+        
+        if isinstance(risks, list):
+            normalized = []
+            for risk in risks:
+                if isinstance(risk, dict):
+                    # 如果是字典，尝试提取描述
+                    risk_str = (
+                        risk.get('description', '') or
+                        risk.get('details', '') or
+                        risk.get('risk', '')
+                    )
+                    if risk_str:
+                        normalized.append(str(risk_str).strip())
+                elif risk:
+                    normalized.append(str(risk).strip())
+            return [r for r in normalized if r]
+        
+        if isinstance(risks, str):
+            return cls._extract_risks_from_text(risks)
+        
+        return []
+    
+    @classmethod
+    def _extract_risks_from_text(cls, text: str) -> List[str]:
+        """从文本中提取风险列表
+        
+        Args:
+            text: 包含风险的文本
+            
+        Returns:风险字符串列表
+        """
+        risks = []
+        
+        # 尝试按分号或换行分割
+        parts = re.split(r'[；;\n]', text)
+        
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            
+            # 去除可能的编号前缀
+            part = re.sub(r'^[0-9]+[.、]\s*', '', part)
+            
+            if part:
+                risks.append(part)
+        
+        return risks
+    
+    @staticmethod
+    def _safe_float(value: Any) -> Optional[float]:
+        """安全地转换为浮点数
+        
+        Args:
+            value: 要转换的值
+            
+        Returns:浮点数或None
+        """
+        if value is None:
+            return None
+        
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+    
+    @classmethod
+    def extract_financial_metrics(cls, text: str) -> Dict[str, Optional[float]]:
+        """从文本中提取财务指标
+        
+        Args:
+            text: 包含财务指标的文本
+            
+        Returns:包含pe_ratio、pb_ratio、market_cap等字段的字典
+        """
+        result = {
+            'pe_ratio': None,
+            'pb_ratio': None,
+            'market_cap': None,
+            'net_profit': None,
+            'revenue': None,
+        }
+        
+        # 提取市盈率 - 简单直接的模式
+        pe_match = re.search(r'市盈率.*?[:：]\s*([\d.]+)', text, re.DOTALL | re.IGNORECASE)
+        if pe_match:
+            result['pe_ratio'] = cls._safe_float(pe_match.group(1))
+        
+        # 提取市净率
+        pb_match = re.search(r'市净率.*?[:：]\s*([\d.]+)', text, re.DOTALL | re.IGNORECASE)
+        if pb_match:
+            result['pb_ratio'] = cls._safe_float(pb_match.group(1))
+        
+        # 提取市值
+        cap_match = re.search(r'(?:市值|总市值).*?[:：]\s*([\d,.]+)', text, re.DOTALL | re.IGNORECASE)
+        if cap_match:
+            cap_str = cap_match.group(1).replace(',', '')
+            result['market_cap'] = cls._safe_float(cap_str)
+        
+        return result
+    
+    @classmethod
+    def extract_technical_indicators(cls, text: str) -> Dict[str, Any]:
+        """从文本中提取技术指标
+        
+        Args:
+            text: 包含技术指标的文本
+            
+        Returns:包含技术指标的字典
+        """
+        result = {
+            'ma5': None,
+            'ma10': None,
+            'ma20': None,
+            'macd_signal': None,
+            'trend': None,
+        }
+        
+        # 提取趋势
+        trend_match = re.search(
+            r'(?:趋势|trend)[：:]\s*([^\n]+)',
+            text, re.IGNORECASE
+        )
+        if trend_match:
+            result['trend'] = trend_match.group(1).strip()
+        
+        # 提取MACD信号
+        macd_match = re.search(
+            r'(?:MACD|macd_signal)[：:]\s*([^\n]+)',
+            text, re.IGNORECASE
+        )
+        if macd_match:
+            result['macd_signal'] = macd_match.group(1).strip()
         
         return result

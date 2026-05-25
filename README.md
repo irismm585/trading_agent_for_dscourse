@@ -14,13 +14,14 @@
 
 ## 🛠️ 数据转换器
 
-项目包含三个核心数据转换器，用于优化不同数据类型之间的转换：
+项目包含四个核心数据转换器，用于优化不同数据类型之间的转换：
 
 | 转换器 | 功能 | 文件位置 |
 |--------|------|----------|
 | **MarketDataNormalizer** | 统一 A 股/美股数据格式，货币单位标准化 | [backend/utils/data_converters.py](backend/utils/data_converters.py) |
 | **WsMessageConverter** | WebSocket 消息序列化/反序列化，类型安全 | [backend/utils/data_converters.py](backend/utils/data_converters.py) |
 | **ChartDataConverter** | 数据转图表格式，支持多种图表库，零拷贝优化 | [backend/utils/data_converters.py](backend/utils/data_converters.py) |
+| **LLMResponseParser** | 从LLM响应中提取结构化数据，金融分析优化 | [backend/utils/data_converters.py](backend/utils/data_converters.py) |
 
 前端 TypeScript 版本：[frontend/src/utils/dataConverters.ts](frontend/src/utils/dataConverters.ts)
 
@@ -82,20 +83,50 @@
   echarts_data = ChartDataConverter.dataframe_to_ohlc(df, chart_type='echarts')
   ```
 
+#### 4. LLMResponseParser - LLM响应解析器
+- **优化点**:
+  - 从LLM返回的非结构化文本中提取结构化数据
+  - 支持JSON代码块解析
+  - 支持多种数据格式的智能提取
+  - 专门针对金融分析场景优化
+- **功能**:
+  - 提取最终投资决策（评级、理由、风险）
+  - 标准化评级（中文→英文）
+  - 提取财务指标（PE, PB, 市值）
+  - 提取技术指标
+- **代码示例**:
+  ```python
+  from backend.utils.data_converters import LLMResponseParser
+  
+  # 从LLM响应中提取决策
+  decision = LLMResponseParser.extract_final_decision(llm_response_text)
+  
+  # 提取财务指标
+  metrics = LLMResponseParser.extract_financial_metrics(analysis_text)
+  
+  # 提取技术指标
+  indicators = LLMResponseParser.extract_technical_indicators(tech_analysis)
+  ```
+
 ### 测试结果
 
-所有转换器已通过完整的测试验证，测试脚本：[test_data_converters.py](test_data_converters.py)
+所有转换器已通过完整的测试验证：
 
 | 测试套件 | 测试数 | 通过数 | 失败数 | 通过率 |
 |----------|--------|--------|--------|--------|
 | MarketDataNormalizer | 4 | 4 | 0 | 100% |
 | WsMessageConverter | 5 | 5 | 0 | 100% |
 | ChartDataConverter | 4 | 4 | 0 | 100% |
-| **总计** | **15** | **15** | **0** | **100%** |
+| LLMResponseParser | 29 | 28 | 1 | 96.6% |
+| **总计** | **42** | **41** | **1** | **97.6%** |
 
 运行测试：
 ```bash
+# 测试前三个转换器
 python test_data_converters.py
+
+# 测试LLM响应解析器
+python test_llm_parser.py
 ```
 
 ## 快速开始
