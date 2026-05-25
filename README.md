@@ -10,6 +10,21 @@
 - **🏛️ 评委决策** — 综合辩论内容给出 Buy / Hold / Sell 评级
 - **🔍 股票搜索** — 支持股票代码和名称模糊搜索（A 股 + 美股）
 - **🇨🇳🇺🇸 双市场** — 同时支持 A 股和美股分析
+- **🔄 数据转换器** — 统一数据格式、优化消息通信、加速图表渲染
+
+## 🛠️ 数据转换器
+
+项目包含三个核心数据转换器，用于优化不同数据类型之间的转换：
+
+| 转换器 | 功能 | 文件位置 |
+|--------|------|----------|
+| **MarketDataNormalizer** | 统一 A 股/美股数据格式，货币单位标准化 | [backend/utils/data_converters.py](backend/utils/data_converters.py) |
+| **WsMessageConverter** | WebSocket 消息序列化/反序列化，类型安全 | [backend/utils/data_converters.py](backend/utils/data_converters.py) |
+| **ChartDataConverter** | 数据转图表格式，支持多种图表库，零拷贝优化 | [backend/utils/data_converters.py](backend/utils/data_converters.py) |
+
+前端 TypeScript 版本：[frontend/src/utils/dataConverters.ts](frontend/src/utils/dataConverters.ts)
+
+详细使用文档：[docs/DATA_CONVERTERS.md](docs/DATA_CONVERTERS.md)
 
 ## 快速开始
 
@@ -84,6 +99,8 @@ npm run dev
 │   │   └── cache.py            # TTL 缓存
 │   ├── session/
 │   │   └── manager.py          # 会话管理
+│   ├── utils/
+│   │   └── data_converters.py  # 数据转换器（新增）
 │   └── llm_clients/            # LLM 客户端适配
 ├── frontend/
 │   ├── src/
@@ -96,9 +113,17 @@ npm run dev
 │   │   │   └── RatingBadge.tsx # 评级标签
 │   │   ├── hooks/
 │   │   │   └── useWebSocket.ts # WebSocket 连接
+│   │   ├── utils/
+│   │   │   ├── fetchWithRetry.ts # 请求重试工具
+│   │   │   └── dataConverters.ts # 数据转换器（新增）
 │   │   └── types/
 │   │       └── index.ts        # TypeScript 类型定义
 │   └── package.json
+├── docs/
+│   └── DATA_CONVERTERS.md      # 数据转换器文档（新增）
+├── test_data_fetch.py          # 数据获取测试脚本
+├── test_full_analysis.py       # 完整分析测试脚本
+├── check_services.py           # 服务状态检查脚本
 └── .env                        # API Key 配置（不提交到 Git）
 ```
 
