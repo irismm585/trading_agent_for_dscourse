@@ -519,21 +519,91 @@ class LLMResponseParser:
             
         Returns:解析后的JSON字典，失败返回None
         """
-        # 匹配 ```json ... ``` 格式
-        pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
-        match = re.search(pattern, text)
+        # 首先清理文本，去除乱码字符
+        cleaned_text = cls._clean_dirty_text(text)
         
-        if match:
-            try:
-                return json.loads(match.group(1).strip())
-            except json.JSONDecodeError:
-                pass
+        # 匹配 ```json ... ``` 格式（可能有多个代码块）
+        pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+        matches = re.findall(pattern, cleaned_text)
+        
+        for json_candidate in matches:
+            # 尝试修复JSON格式
+            repaired_json = cls._repair_json(json_candidate.strip())
+            if repaired_json:
+                try:
+                    return json.loads(repaired_json)
+                except json.JSONDecodeError:
+                    continue
         
         # 如果没有找到代码块，尝试直接解析整个文本
         try:
-            return json.loads(text.strip())
+            repaired_text = cls._repair_json(cleaned_text.strip())
+            if repaired_text:
+                return json.loads(repaired_text)
         except json.JSONDecodeError:
+            pass
+        
+        return None
+    
+    @classmethod
+    def _clean_dirty_text(cls, text: str) -> str:
+        """清理脏文本，去除乱码字符
+        
+        Args:
+            text: 原始文本
+            
+        Returns:清理后的文本
+        """
+        # 移除单个D字符（乱码）
+        cleaned = re.sub(r'\bD\b', '', text)
+        # 移除多个连续的D字符
+        cleaned = re.sub(r'D+', '', cleaned)
+        # 移除问号字符
+        cleaned = re.sub(r'[�?]', '', cleaned)
+        # 移除多余的空格和换行
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        return cleaned
+    
+    @classmethod
+    def _repair_json(cls, json_str: str) -> Optional[str]:
+        """尝试修复格式错误的JSON
+        
+        Args:
+            json_str: 有问题的JSON字符串
+            
+        Returns:修复后的JSON字符串，或None如果无法修复
+        """
+        if not json_str:
             return None
+        
+        repaired = json_str
+        
+        # 修复常见的JSON格式错误
+        # 1. 修复缺少逗号的问题（在}或]前添加逗号）
+        repaired = re.sub(r'(\s*})(\s*"[^"]+"\s*:)', r'\1,\2', repaired)
+        repaired = re.sub(r'(\s*\])(\s*"[^"]+"\s*:)', r'\1,\2', repaired)
+        
+        # 2. 修复多余的花括号
+        # 查找第一个{和最后一个}，只保留中间部分
+        start_idx = repaired.find('{')
+        end_idx = repaired.rfind('}')
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            repaired = repaired[start_idx:end_idx + 1]
+        
+        # 3. 修复不匹配的引号
+        # 移除多余的引号
+        repaired = repaired.replace('""', '"')
+        repaired = repaired.replace("''", "'")
+        
+        # 4. 尝试简单修复（这是一个简化版，实际中可能需要更复杂的逻辑）
+        # 尝试删除行首/行尾的非JSON字符
+        repaired = repaired.strip()
+        
+        # 检查是否看起来像JSON
+        if repaired.startswith('{') and repaired.endswith('}'):
+            return repaired
+        
+        return None
     
     @classmethod
     def extract_final_decision(cls, text: str) -> Dict[str, Any]:
@@ -613,45 +683,85 @@ class LLMResponseParser:
             
         Returns:填充后的结果字典
         """
-        # 提取评级
-        rating_match = re.search(
-            r'(?:最终评级|评级|rating)[：:]\s*([^\n]+)',
-            text
-        )
-        if rating_match:
-            result['rating'] = cls._normalize_rating(rating_match.group(1).strip())
+        # 首先清理文本
+        cleaned_text = cls._clean_dirty_text(text)
         
-        # 提取理由
-        reasoning_match = re.search(
-            r'(?:评判理由|理由|reasoning|reason)[：:]\s*([\s\S]*?)(?=\n\*\*|$)',
-            text
+        # 1. 先尝试在JSON字符串中查找评级（即使JSON格式错误）
+        # 查找 "rating": "..." 模式
+        rating_json_match = re.search(
+            r'"rating"\s*:\s*["\']([^"\']+)["\']',
+            cleaned_text
         )
-        if reasoning_match:
-            result['reasoning'] = reasoning_match.group(1).strip()
+        if rating_json_match:
+            result['rating'] = cls._normalize_rating(rating_json_match.group(1).strip())
         
-        # 提取风险
-        risks_match = re.search(
-            r'(?:风险提示|主要风险|key_risks|key risks)[：:]\s*([\s\S]*?)(?=\n\*\*|$)',
-            text
-        )
-        if risks_match:
-            result['key_risks'] = cls._extract_risks_from_text(risks_match.group(1).strip())
+        # 2. 如果JSON模式没找到，再尝试文本模式
+        if not result['rating']:
+            rating_match = re.search(
+                r'(?:最终评级|评级|rating)[：:]\s*([^\n"\',}]+)',
+                text
+            )
+            if rating_match:
+                result['rating'] = cls._normalize_rating(rating_match.group(1).strip())
         
-        # 提取建议入场价
-        price_match = re.search(
-            r'(?:建议入场价|入场价|suggested_entry_price)[：:]\s*[^¥]?[¥]?\s*([\d.]+)',
-            text
-        )
-        if price_match:
-            result['suggested_entry_price'] = cls._safe_float(price_match.group(1))
+        # 3. 直接搜索常见的评级关键词
+        if not result['rating']:
+            for chinese_rating, english_rating in [
+                ('买入', 'Buy'),
+                ('持有/观望', 'Hold'),
+                ('持有', 'Hold'),
+                ('观望', 'Hold'),
+                ('卖出', 'Sell'),
+            ]:
+                if chinese_rating in cleaned_text:
+                    result['rating'] = english_rating
+                    break
         
-        # 提取建议持有周期
-        period_match = re.search(
-            r'(?:建议持有周期|持有周期|suggested_holding_period)[：:]\s*([^\n]+)',
-            text
+        # 4. 提取理由 - 同时支持JSON模式和文本模式
+        reasoning_json_match = re.search(
+            r'"(?:reasoning|reason)"\s*:\s*["\']([^"\']+)["\']',
+            cleaned_text
         )
-        if period_match:
-            result['suggested_holding_period'] = period_match.group(1).strip()
+        if reasoning_json_match:
+            result['reasoning'] = reasoning_json_match.group(1).strip()
+        else:
+            # 尝试文本模式
+            reasoning_match = re.search(
+                r'(?:评判理由|理由|reasoning|reason)[：:]\s*([^\n]+)',
+                text
+            )
+            if reasoning_match:
+                result['reasoning'] = reasoning_match.group(1).strip()
+        
+        # 5. 提取风险 - 同时支持JSON模式和文本模式
+        # 先从JSON数组中提取
+        risk_patterns = [
+            r'"risk"\s*:\s*["\']([^"\']+)["\']',
+            r'"description"\s*:\s*["\']([^"\']+)["\']',
+            r'"details"\s*:\s*["\']([^"\']+)["\']',
+        ]
+        
+        risks = []
+        for pattern in risk_patterns:
+            matches = re.findall(pattern, cleaned_text)
+            risks.extend(m.strip() for m in matches if m.strip())
+        
+        # 如果JSON模式没找到，尝试文本模式
+        if not risks:
+            risks_match = re.search(
+                r'(?:风险提示|主要风险|key_risks|key risks)[：:]\s*([^\n]+)',
+                text
+            )
+            if risks_match:
+                risk_text = risks_match.group(1).strip()
+                # 分号分隔
+                if '；' in risk_text:
+                    risks = [r.strip() for r in risk_text.split('；') if r.strip()]
+                elif ';' in risk_text:
+                    risks = [r.strip() for r in risk_text.split(';') if r.strip()]
+        
+        # 去重
+        result['key_risks'] = list(set(risks))
         
         return result
     
