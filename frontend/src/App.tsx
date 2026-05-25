@@ -8,6 +8,7 @@ import StockProfileBar from './components/StockProfileBar'
 import FinancialMetrics from './components/FinancialMetrics'
 import { SECTION_KEY_MAP } from './constants/tabs'
 import { simpleMarkdown } from './utils/markdown'
+import { fetchWithRetry, HEALTH_CHECK_OPTIONS, SESSION_CREATE_OPTIONS } from './utils/fetchWithRetry'
 import './App.css'
 
 const API_BASE = '/api'
@@ -106,13 +107,16 @@ export default function App() {
     setIsCreating(true)
     setCreateError(null)
 
-    // Quick health check to verify backend is reachable
+    // Quick health check to verify backend is reachable (with retry)
     try {
-      const hc = new AbortController()
-      const ht = setTimeout(() => hc.abort(), 5000)
-      const healthRes = await fetch(`${API_BASE}/health`, { signal: hc.signal })
-      clearTimeout(ht)
+      console.log('[App] 检查后端健康状态...')
+      const healthRes = await fetchWithRetry(
+        `${API_BASE}/health`,
+        {},
+        HEALTH_CHECK_OPTIONS
+      )
       if (!healthRes.ok) throw new Error('Backend unhealthy')
+      console.log('[App] 后端健康检查通过')
     } catch (healthErr) {
       const aborted = (healthErr instanceof DOMException && healthErr.name === 'AbortError') ||
                       (healthErr instanceof Error && healthErr.name === 'AbortError')
@@ -124,15 +128,25 @@ export default function App() {
     }
 
     try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 120000)
-      const res = await fetch(`${API_BASE}/session`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request), signal: controller.signal,
-      })
-      clearTimeout(timeoutId)
-      if (!res.ok) throw new Error((await res.json()).detail || 'Failed')
+      console.log('[App] 创建会话...')
+      const res = await fetchWithRetry(
+        `${API_BASE}/session`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+        },
+        SESSION_CREATE_OPTIONS
+      )
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.detail || 'Failed')
+      }
+      
       const data = await res.json()
+      console.log('[App] 会话创建成功:', data.session_id)
+      
       setSessionId(data.session_id)
       setMarket(data.market as 'cn' | 'us')
       setAppMarket(data.market as 'cn' | 'us')

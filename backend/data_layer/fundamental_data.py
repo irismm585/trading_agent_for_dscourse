@@ -6,6 +6,9 @@ US stocks → yfinance — reliable for US markets
 
 import time
 from typing import Optional
+from datetime import datetime
+import json
+import logging
 
 import pandas as pd
 
@@ -22,20 +25,250 @@ except ImportError:
 from backend.data_layer.symbol_utils import to_yfinance_ticker, is_cn_market
 
 
+logger = logging.getLogger(__name__)
+
+
+class FundamentalDataLogger:
+    """基本面数据获取日志记录器"""
+    
+    _logs = []
+    _max_logs = 1000
+    
+    @classmethod
+    def log_attempt(cls, source: str, symbol: str, data_type: str,
+                     start_time: float, success: bool, duration_ms: float,
+                     error: Optional[str] = None, details: Optional[dict] = None):
+        """记录一次基本面数据获取尝试"""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "source": source,
+            "symbol": symbol,
+            "data_type": data_type,
+            "success": success,
+            "duration_ms": round(duration_ms, 2),
+            "error": error,
+            "details": details or {}
+        }
+        cls._logs.append(log_entry)
+        
+        if len(cls._logs) > cls._max_logs:
+            cls._logs = cls._logs[-cls._max_logs:]
+        
+        status = "✓" if success else "✗"
+        error_str = f" | 错误: {error}" if error else ""
+        details_str = f" | {json.dumps(details, ensure_ascii=False)}" if details else ""
+        print(f"[基本面数据] {status} {source} - {symbol} - {data_type} - {duration_ms:.2f}ms{error_str}{details_str}")
+        logger.info(f"[基本面数据] {source} - {symbol} - {data_type} - {duration_ms:.2f}ms{error_str}{details_str}")
+    
+    @classmethod
+    def get_recent_logs(cls, limit: int = 50):
+        """获取最近的日志"""
+        return cls._logs[-limit:]
+    
+    @classmethod
+    def get_failed_logs(cls, symbol: Optional[str] = None, source: Optional[str] = None, data_type: Optional[str] = None):
+        """获取失败的日志记录
+        
+        Args:
+            symbol: 按股票代码过滤（可选）
+            source: 按数据源过滤（可选）
+            data_type: 按数据类型过滤（可选）
+        
+        Returns:
+            失败的日志列表
+        """
+        logs = [l for l in cls._logs if not l["success"]]
+        if symbol:
+            logs = [l for l in logs if l["symbol"] == symbol]
+        if source:
+            logs = [l for l in logs if l["source"] == source]
+        if data_type:
+            logs = [l for l in logs if l.get("data_type") == data_type]
+        return logs
+    
+    @classmethod
+    def get_logs_by_source(cls, source: str, only_failed: bool = False):
+        """按数据源获取日志
+        
+        Args:
+            source: 数据源名称
+            only_failed: 是否只返回失败记录
+            
+        Returns:
+            日志列表
+        """
+        logs = [l for l in cls._logs if l["source"] == source]
+        if only_failed:
+            logs = [l for l in logs if not l["success"]]
+        return logs
+    
+    @classmethod
+    def get_logs_by_symbol(cls, symbol: str, only_failed: bool = False):
+        """按股票代码获取日志
+        
+        Args:
+            symbol: 股票代码
+            only_failed: 是否只返回失败记录
+            
+        Returns:
+            日志列表
+        """
+        logs = [l for l in cls._logs if l["symbol"] == symbol]
+        if only_failed:
+            logs = [l for l in logs if not l["success"]]
+        return logs
+    
+    @classmethod
+    def print_failed_summary(cls, symbol: Optional[str] = None):
+        """打印失败记录的格式化摘要
+        
+        Args:
+            symbol: 按股票代码过滤（可选）
+        """
+        failed_logs = cls.get_failed_logs(symbol=symbol)
+        if not failed_logs:
+            print("\n" + "="*60)
+            print("✅ 没有失败的记录")
+            print("="*60 + "\n")
+            return
+        
+        print("\n" + "="*60)
+        print(f"❌ 失败记录摘要 (共 {len(failed_logs)} 条)")
+        print("="*60)
+        
+        # 按数据源分组
+        by_source = {}
+        for log in failed_logs:
+            source = log["source"]
+            if source not in by_source:
+                by_source[source] = []
+            by_source[source].append(log)
+        
+        for source, logs in by_source.items():
+            print(f"\n📊 数据源: {source}")
+            print(f"   失败次数: {len(logs)}")
+            
+            # 按错误类型分组
+            by_error = {}
+            for log in logs:
+                error = log.get("error", "未知错误")
+                if error not in by_error:
+                    by_error[error] = []
+                by_error[error].append(log)
+            
+            for error, error_logs in by_error.items():
+                print(f"   错误类型: {error}")
+                print(f"   出现次数: {len(error_logs)}")
+                
+                # 显示最近的几条详细信息
+                recent = error_logs[-3:]
+                for i, log in enumerate(recent):
+                    symbol = log.get("symbol", "N/A")
+                    data_type = log.get("data_type", "N/A")
+                    duration = log.get("duration_ms", 0)
+                    details = log.get("details", {})
+                    print(f"   [{i+1}] {symbol} - {data_type} - {duration:.2f}ms - {json.dumps(details, ensure_ascii=False)}")
+        
+        print("="*60 + "\n")
+    
+    @classmethod
+    def get_summary(cls, symbol: Optional[str] = None):
+        """获取统计摘要"""
+        logs = cls._logs
+        if symbol:
+            logs = [l for l in logs if l["symbol"] == symbol]
+        
+        if not logs:
+            return {"total": 0, "success": 0, "failed": 0}
+        
+        success = sum(1 for l in logs if l["success"])
+        return {
+            "total": len(logs),
+            "success": success,
+            "failed": len(logs) - success,
+            "avg_duration_ms": round(sum(l["duration_ms"] for l in logs) / len(logs), 2) if logs else 0
+        }
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # A-share (akshare)
 # ═══════════════════════════════════════════════════════════════════════
 
-def _ak_retry(fn, max_attempts: int = 3):
-    """Retry akshare call with exponential backoff."""
+def _ak_retry(fn, symbol: str, data_type: str, max_attempts: int = 5):
+    """Retry akshare call with exponential backoff and logging."""
     for attempt in range(max_attempts):
+        start_time = time.time()
         try:
-            return fn()
+            result = fn()
+            duration_ms = (time.time() - start_time) * 1000
+            
+            if result is None:
+                FundamentalDataLogger.log_attempt(
+                    source="akshare",
+                    symbol=symbol,
+                    data_type=data_type,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=duration_ms,
+                    error="返回 None",
+                    details={"attempt": attempt + 1}
+                )
+                raise ValueError("akshare returned None")
+            
+            if isinstance(result, pd.DataFrame) and result.empty:
+                FundamentalDataLogger.log_attempt(
+                    source="akshare",
+                    symbol=symbol,
+                    data_type=data_type,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=duration_ms,
+                    error="返回空 DataFrame",
+                    details={"attempt": attempt + 1}
+                )
+                raise ValueError("akshare returned empty DataFrame")
+            
+            FundamentalDataLogger.log_attempt(
+                source="akshare",
+                symbol=symbol,
+                data_type=data_type,
+                start_time=start_time,
+                success=True,
+                duration_ms=duration_ms,
+                details={
+                    "attempt": attempt + 1,
+                    "result_type": type(result).__name__,
+                    "rows_count": len(result) if isinstance(result, pd.DataFrame) else "N/A"
+                }
+            )
+            return result
         except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
             if attempt < max_attempts - 1:
-                print(f"[fundamental] retry {attempt+1}/{max_attempts}: {e}")
-                time.sleep(1.5 ** attempt)
+                FundamentalDataLogger.log_attempt(
+                    source="akshare",
+                    symbol=symbol,
+                    data_type=data_type,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=duration_ms,
+                    error=str(e),
+                    details={"attempt": attempt + 1, "will_retry": True}
+                )
+                sleep_time = min(2 ** attempt, 15)
+                print(f"[基本面数据] akshare 重试等待 {sleep_time}s...")
+                time.sleep(sleep_time)
             else:
+                FundamentalDataLogger.log_attempt(
+                    source="akshare",
+                    symbol=symbol,
+                    data_type=data_type,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=duration_ms,
+                    error=str(e),
+                    details={"attempt": attempt + 1, "will_retry": False}
+                )
                 raise
     return None
 
@@ -47,7 +280,7 @@ def _cn_financial(symbol: str) -> dict:
     if ak is not None:
         # Valuation indicators
         try:
-            info_df = _ak_retry(lambda: ak.stock_individual_info_em(symbol=symbol))
+            info_df = _ak_retry(lambda: ak.stock_individual_info_em(symbol=symbol), symbol, "info")
             if info_df is not None and not info_df.empty:
                 info_dict = dict(zip(info_df.iloc[:, 0], info_df.iloc[:, 1]))
                 key_items = [
@@ -62,7 +295,7 @@ def _cn_financial(symbol: str) -> dict:
 
         # Income statement
         try:
-            income_df = _ak_retry(lambda: ak.stock_profit_sheet_by_report_em(symbol=symbol))
+            income_df = _ak_retry(lambda: ak.stock_profit_sheet_by_report_em(symbol=symbol), symbol, "income")
             if income_df is not None and not income_df.empty:
                 result["income"] = income_df.head(5)
         except Exception as e:
@@ -70,7 +303,7 @@ def _cn_financial(symbol: str) -> dict:
 
         # Balance sheet
         try:
-            balance_df = _ak_retry(lambda: ak.stock_balance_sheet_by_report_em(symbol=symbol))
+            balance_df = _ak_retry(lambda: ak.stock_balance_sheet_by_report_em(symbol=symbol), symbol, "balance")
             if balance_df is not None and not balance_df.empty:
                 result["balance"] = balance_df.head(5)
         except Exception as e:
@@ -78,7 +311,7 @@ def _cn_financial(symbol: str) -> dict:
 
         # Cash flow
         try:
-            cf_df = _ak_retry(lambda: ak.stock_cash_flow_sheet_by_report_em(symbol=symbol))
+            cf_df = _ak_retry(lambda: ak.stock_cash_flow_sheet_by_report_em(symbol=symbol), symbol, "cashflow")
             if cf_df is not None and not cf_df.empty:
                 result["cashflow"] = cf_df.head(5)
         except Exception as e:
@@ -86,10 +319,16 @@ def _cn_financial(symbol: str) -> dict:
 
     # yfinance fallback
     if all(v is None or (isinstance(v, pd.DataFrame) and v.empty) for v in result.values()) and yf is not None:
+        print(f"[基本面数据] 尝试 yfinance 回退...")
+        start_time = time.time()
         try:
             ticker_str = to_yfinance_ticker(symbol, "cn")
             ticker = yf.Ticker(ticker_str)
+            
+            info_start = time.time()
             info = ticker.info
+            info_duration = (time.time() - info_start) * 1000
+            
             if info:
                 key_items = {
                     "longName": "公司名称", "marketCap": "总市值",
@@ -104,20 +343,81 @@ def _cn_financial(symbol: str) -> dict:
                     if val is not None:
                         filtered[cn_label] = val
                 result["info"] = filtered
+                FundamentalDataLogger.log_attempt(
+                    source="yfinance:cn_fallback",
+                    symbol=ticker_str,
+                    data_type="info",
+                    start_time=info_start,
+                    success=True,
+                    duration_ms=info_duration,
+                    details={"items_count": len(filtered)}
+                )
+            else:
+                FundamentalDataLogger.log_attempt(
+                    source="yfinance:cn_fallback",
+                    symbol=ticker_str,
+                    data_type="info",
+                    start_time=info_start,
+                    success=False,
+                    duration_ms=info_duration,
+                    error="返回空信息"
+                )
 
             for name, method in [
                 ("income", lambda t: t.quarterly_income_stmt),
                 ("balance", lambda t: t.quarterly_balance_sheet),
                 ("cashflow", lambda t: t.quarterly_cashflow),
             ]:
+                data_start = time.time()
                 try:
                     df = method(ticker)
+                    data_duration = (time.time() - data_start) * 1000
                     if df is not None and not df.empty:
                         result[name] = df
-                except Exception:
-                    pass
-            print(f"[fundamental] yfinance fallback succeeded for {ticker_str}")
+                        FundamentalDataLogger.log_attempt(
+                            source="yfinance:cn_fallback",
+                            symbol=ticker_str,
+                            data_type=name,
+                            start_time=data_start,
+                            success=True,
+                            duration_ms=data_duration,
+                            details={"rows_count": len(df)}
+                        )
+                    else:
+                        FundamentalDataLogger.log_attempt(
+                            source="yfinance:cn_fallback",
+                            symbol=ticker_str,
+                            data_type=name,
+                            start_time=data_start,
+                            success=False,
+                            duration_ms=data_duration,
+                            error="返回空数据"
+                        )
+                except Exception as e:
+                    data_duration = (time.time() - data_start) * 1000
+                    FundamentalDataLogger.log_attempt(
+                        source="yfinance:cn_fallback",
+                        symbol=ticker_str,
+                        data_type=name,
+                        start_time=data_start,
+                        success=False,
+                        duration_ms=data_duration,
+                        error=str(e)
+                    )
+            
+            total_duration = (time.time() - start_time) * 1000
+            print(f"[基本面数据] yfinance 回退成功 - {ticker_str} - {total_duration:.2f}ms")
         except Exception as e:
+            total_duration = (time.time() - start_time) * 1000
+            FundamentalDataLogger.log_attempt(
+                source="yfinance:cn_fallback",
+                symbol=symbol,
+                data_type="all",
+                start_time=start_time,
+                success=False,
+                duration_ms=total_duration,
+                error=str(e)
+            )
             print(f"[fundamental] yfinance fallback error for {symbol}: {e}")
 
     return result
@@ -127,16 +427,82 @@ def _cn_financial(symbol: str) -> dict:
 # US stock (yfinance)
 # ═══════════════════════════════════════════════════════════════════════
 
-def _yf_retry(fn, max_retries: int = 3):
-    import time
+def _yf_retry(fn, symbol: str, data_type: str, max_retries: int = 3):
+    """Retry yfinance call with exponential backoff and logging."""
     for attempt in range(max_retries):
+        start_time = time.time()
         try:
             result = fn()
+            duration_ms = (time.time() - start_time) * 1000
+            
+            if result is None:
+                FundamentalDataLogger.log_attempt(
+                    source="yfinance",
+                    symbol=symbol,
+                    data_type=data_type,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=duration_ms,
+                    error="返回 None",
+                    details={"attempt": attempt + 1}
+                )
+                raise ValueError("yfinance returned None")
+            
+            if isinstance(result, pd.DataFrame) and result.empty:
+                FundamentalDataLogger.log_attempt(
+                    source="yfinance",
+                    symbol=symbol,
+                    data_type=data_type,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=duration_ms,
+                    error="返回空 DataFrame",
+                    details={"attempt": attempt + 1}
+                )
+                raise ValueError("yfinance returned empty DataFrame")
+            
+            FundamentalDataLogger.log_attempt(
+                source="yfinance",
+                symbol=symbol,
+                data_type=data_type,
+                start_time=start_time,
+                success=True,
+                duration_ms=duration_ms,
+                details={
+                    "attempt": attempt + 1,
+                    "result_type": type(result).__name__,
+                    "rows_count": len(result) if isinstance(result, pd.DataFrame) else "N/A"
+                }
+            )
             return result
-        except Exception:
-            if attempt == max_retries - 1:
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            if attempt < max_retries - 1:
+                FundamentalDataLogger.log_attempt(
+                    source="yfinance",
+                    symbol=symbol,
+                    data_type=data_type,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=duration_ms,
+                    error=str(e),
+                    details={"attempt": attempt + 1, "will_retry": True}
+                )
+                sleep_time = 1.5 ** attempt
+                print(f"[基本面数据] yfinance 重试等待 {sleep_time}s...")
+                time.sleep(sleep_time)
+            else:
+                FundamentalDataLogger.log_attempt(
+                    source="yfinance",
+                    symbol=symbol,
+                    data_type=data_type,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=duration_ms,
+                    error=str(e),
+                    details={"attempt": attempt + 1, "will_retry": False}
+                )
                 raise
-            time.sleep(1.5 ** attempt)
     return None
 
 
@@ -153,7 +519,7 @@ def _us_financial(symbol: str) -> dict:
 
         # Valuation indicators
         try:
-            info = _yf_retry(lambda: ticker.info)
+            info = _yf_retry(lambda: ticker.info, ticker_str, "info")
             if info:
                 key_items = {
                     "longName": "公司名称",
@@ -191,7 +557,7 @@ def _us_financial(symbol: str) -> dict:
             ("cashflow", lambda t: t.quarterly_cashflow),
         ]:
             try:
-                df = _yf_retry(lambda: method(ticker))
+                df = _yf_retry(lambda: method(ticker), ticker_str, name)
                 if df is not None and not df.empty:
                     result[name] = df
             except Exception:

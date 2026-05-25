@@ -39,3 +39,6 @@ data/*.db
 
 # Logs
 *.log
+
+# Test Results
+test_results/

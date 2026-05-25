@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Optional
-
+import json
 import time
 import numpy as np
+import logging
+
 import pandas as pd
 
 try:
@@ -30,6 +32,213 @@ except ImportError:
     _TDX_AVAILABLE = False
 
 from backend.data_layer.symbol_utils import to_yfinance_ticker, is_cn_market
+
+
+logger = logging.getLogger(__name__)
+
+
+class DataFetchLogger:
+    """统一的数据获取日志记录器"""
+    
+    _logs = []
+    _max_logs = 1000
+    
+    @classmethod
+    def log_attempt(cls, source: str, symbol: str, start_time: float, 
+                     success: bool, duration_ms: float, 
+                     error: Optional[str] = None,
+                     details: Optional[dict] = None):
+        """记录一次数据获取尝试"""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "source": source,
+            "symbol": symbol,
+            "success": success,
+            "duration_ms": round(duration_ms, 2),
+            "error": error,
+            "details": details or {}
+        }
+        cls._logs.append(log_entry)
+        
+        if len(cls._logs) > cls._max_logs:
+            cls._logs = cls._logs[-cls._max_logs:]
+        
+        status = "✓" if success else "✗"
+        error_str = f" | 错误: {error}" if error else ""
+        details_str = f" | {json.dumps(details, ensure_ascii=False)}" if details else ""
+        print(f"[数据获取] {status} {source} - {symbol} - {duration_ms:.2f}ms{error_str}{details_str}")
+        logger.info(f"[数据获取] {source} - {symbol} - {duration_ms:.2f}ms{error_str}{details_str}")
+    
+    @classmethod
+    def get_recent_logs(cls, limit: int = 50):
+        """获取最近的日志"""
+        return cls._logs[-limit:]
+    
+    @classmethod
+    def get_failed_logs(cls, symbol: Optional[str] = None, source: Optional[str] = None):
+        """获取失败的日志记录
+        
+        Args:
+            symbol: 按股票代码过滤（可选）
+            source: 按数据源过滤（可选）
+        
+        Returns:
+            失败的日志列表
+        """
+        logs = [l for l in cls._logs if not l["success"]]
+        if symbol:
+            logs = [l for l in logs if l["symbol"] == symbol]
+        if source:
+            logs = [l for l in logs if l["source"] == source]
+        return logs
+    
+    @classmethod
+    def get_logs_by_source(cls, source: str, only_failed: bool = False):
+        """按数据源获取日志
+        
+        Args:
+            source: 数据源名称
+            only_failed: 是否只返回失败记录
+            
+        Returns:
+            日志列表
+        """
+        logs = [l for l in cls._logs if l["source"] == source]
+        if only_failed:
+            logs = [l for l in logs if not l["success"]]
+        return logs
+    
+    @classmethod
+    def get_logs_by_symbol(cls, symbol: str, only_failed: bool = False):
+        """按股票代码获取日志
+        
+        Args:
+            symbol: 股票代码
+            only_failed: 是否只返回失败记录
+            
+        Returns:
+            日志列表
+        """
+        logs = [l for l in cls._logs if l["symbol"] == symbol]
+        if only_failed:
+            logs = [l for l in logs if not l["success"]]
+        return logs
+    
+    @classmethod
+    def print_failed_summary(cls, symbol: Optional[str] = None):
+        """打印失败记录的格式化摘要
+        
+        Args:
+            symbol: 按股票代码过滤（可选）
+        """
+        failed_logs = cls.get_failed_logs(symbol=symbol)
+        if not failed_logs:
+            print("\n" + "="*60)
+            print("✅ 没有失败的记录")
+            print("="*60 + "\n")
+            return
+        
+        print("\n" + "="*60)
+        print(f"❌ 失败记录摘要 (共 {len(failed_logs)} 条)")
+        print("="*60)
+        
+        # 按数据源分组
+        by_source = {}
+        for log in failed_logs:
+            source = log["source"]
+            if source not in by_source:
+                by_source[source] = []
+            by_source[source].append(log)
+        
+        for source, logs in by_source.items():
+            print(f"\n📊 数据源: {source}")
+            print(f"   失败次数: {len(logs)}")
+            
+            # 按错误类型分组
+            by_error = {}
+            for log in logs:
+                error = log.get("error", "未知错误")
+                if error not in by_error:
+                    by_error[error] = []
+                by_error[error].append(log)
+            
+            for error, error_logs in by_error.items():
+                print(f"   错误类型: {error}")
+                print(f"   出现次数: {len(error_logs)}")
+                
+                # 显示最近的几条详细信息
+                recent = error_logs[-3:]
+                for i, log in enumerate(recent):
+                    symbol = log.get("symbol", "N/A")
+                    duration = log.get("duration_ms", 0)
+                    details = log.get("details", {})
+                    print(f"   [{i+1}] {symbol} - {duration:.2f}ms - {json.dumps(details, ensure_ascii=False)}")
+        
+        print("="*60 + "\n")
+    
+    @classmethod
+    def get_summary(cls, symbol: Optional[str] = None):
+        """获取统计摘要"""
+        logs = cls._logs
+        if symbol:
+            logs = [l for l in logs if l["symbol"] == symbol]
+        
+        if not logs:
+            return {"total": 0, "success": 0, "failed": 0}
+        
+        success = sum(1 for l in logs if l["success"])
+        return {
+            "total": len(logs),
+            "success": success,
+            "failed": len(logs) - success,
+            "avg_duration_ms": round(sum(l["duration_ms"] for l in logs) / len(logs), 2) if logs else 0
+        }
+
+
+def _log_data_fetch(source: str, symbol: str, func, *args, **kwargs):
+    """包装函数，记录数据获取的耗时和结果"""
+    start_time = time.time()
+    try:
+        result = func(*args, **kwargs)
+        duration_ms = (time.time() - start_time) * 1000
+        
+        is_valid = False
+        if result is not None:
+            if isinstance(result, pd.DataFrame):
+                is_valid = not result.empty
+            else:
+                is_valid = True
+        
+        if is_valid:
+            DataFetchLogger.log_attempt(
+                source=source,
+                symbol=symbol,
+                start_time=start_time,
+                success=True,
+                duration_ms=duration_ms,
+                details={"result_type": type(result).__name__}
+            )
+        else:
+            DataFetchLogger.log_attempt(
+                source=source,
+                symbol=symbol,
+                start_time=start_time,
+                success=False,
+                duration_ms=duration_ms,
+                error="返回空数据"
+            )
+        return result
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        DataFetchLogger.log_attempt(
+            source=source,
+            symbol=symbol,
+            start_time=start_time,
+            success=False,
+            duration_ms=duration_ms,
+            error=str(e)
+        )
+        raise
 
 
 # ── A-share stock name/industry via akshare ────────────────────────────
@@ -103,6 +312,14 @@ def _tdx_market(symbol: str) -> int:
 def _tdx_ohlcv(symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """Fetch A-share OHLCV via pytdx (Tongdaxin TCP protocol, most reliable)."""
     if not _TDX_AVAILABLE:
+        DataFetchLogger.log_attempt(
+            source="pytdx",
+            symbol=symbol,
+            start_time=time.time(),
+            success=False,
+            duration_ms=0,
+            error="pytdx 未安装"
+        )
         return None
 
     market = _tdx_market(symbol)
@@ -111,13 +328,29 @@ def _tdx_ohlcv(symbol: str, start_date: str, end_date: str) -> Optional[pd.DataF
 
     for host, port in _TDX_SERVERS:
         api = TdxHq_API()
+        start_time = time.time()
         try:
+            connect_start = time.time()
             api.connect(host, port, time_out=5)
-            # Fetch more bars than needed and filter by date
+            connect_duration = (time.time() - connect_start) * 1000
+            
+            fetch_start = time.time()
             data = api.get_security_bars(4, market, symbol, 0, 800)
+            fetch_duration = (time.time() - fetch_start) * 1000
+            
             api.disconnect()
+            total_duration = (time.time() - start_time) * 1000
 
             if not data:
+                DataFetchLogger.log_attempt(
+                    source=f"pytdx:{host}:{port}",
+                    symbol=symbol,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=total_duration,
+                    error="返回空数据",
+                    details={"connect_ms": connect_duration, "fetch_ms": fetch_duration}
+                )
                 continue
 
             rows = []
@@ -137,16 +370,54 @@ def _tdx_ohlcv(symbol: str, start_date: str, end_date: str) -> Optional[pd.DataF
             if rows:
                 rows.sort(key=lambda r: r["date"])
                 df = pd.DataFrame(rows)
-                print(f"[stock_data] pytdx OK for {symbol} ({len(df)} bars)")
+                DataFetchLogger.log_attempt(
+                    source=f"pytdx:{host}:{port}",
+                    symbol=symbol,
+                    start_time=start_time,
+                    success=True,
+                    duration_ms=total_duration,
+                    details={
+                        "connect_ms": connect_duration,
+                        "fetch_ms": fetch_duration,
+                        "bars_count": len(df),
+                        "date_range": f"{df['date'].iloc[0]} to {df['date'].iloc[-1]}"
+                    }
+                )
                 return df
+            else:
+                DataFetchLogger.log_attempt(
+                    source=f"pytdx:{host}:{port}",
+                    symbol=symbol,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=total_duration,
+                    error="日期范围内无数据",
+                    details={"connect_ms": connect_duration, "fetch_ms": fetch_duration}
+                )
 
         except Exception as exc:
-            print(f"[stock_data] pytdx {host}:{port} error: {exc}")
+            total_duration = (time.time() - start_time) * 1000
+            DataFetchLogger.log_attempt(
+                source=f"pytdx:{host}:{port}",
+                symbol=symbol,
+                start_time=start_time,
+                success=False,
+                duration_ms=total_duration,
+                error=str(exc)
+            )
             try:
                 api.disconnect()
             except Exception:
                 pass
 
+    DataFetchLogger.log_attempt(
+        source="pytdx",
+        symbol=symbol,
+        start_time=time.time(),
+        success=False,
+        duration_ms=0,
+        error="所有服务器均失败"
+    )
     return None
 
 
@@ -211,32 +482,99 @@ def _us_ohlcv(symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFr
         raise ImportError("yfinance is required. Install with: pip install yfinance")
 
     ticker_str = to_yfinance_ticker(symbol, "us")
+    df = None
 
     # Approach 1: Ticker.history() with retry
     for attempt in range(2):
+        start_time = time.time()
         try:
             ticker = yf.Ticker(ticker_str)
             df = ticker.history(start=start_date, end=end_date)
+            duration_ms = (time.time() - start_time) * 1000
 
             if df is not None and not df.empty:
-                break  # Success
-            if attempt == 0:
-                time.sleep(2)
+                DataFetchLogger.log_attempt(
+                    source="yfinance:history",
+                    symbol=ticker_str,
+                    start_time=start_time,
+                    success=True,
+                    duration_ms=duration_ms,
+                    details={"attempt": attempt + 1, "bars_count": len(df)}
+                )
+                break
+            else:
+                DataFetchLogger.log_attempt(
+                    source="yfinance:history",
+                    symbol=ticker_str,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=duration_ms,
+                    error="返回空数据",
+                    details={"attempt": attempt + 1}
+                )
+                if attempt == 0:
+                    time.sleep(2)
         except Exception as exc:
-            print(f"[stock_data] yfinance history error for {ticker_str} (attempt {attempt+1}/2): {exc}")
+            duration_ms = (time.time() - start_time) * 1000
+            DataFetchLogger.log_attempt(
+                source="yfinance:history",
+                symbol=ticker_str,
+                start_time=start_time,
+                success=False,
+                duration_ms=duration_ms,
+                error=str(exc),
+                details={"attempt": attempt + 1}
+            )
             if attempt == 0:
                 time.sleep(2)
     else:
         # Approach 2: yf.download() as fallback
-        print(f"[stock_data] trying yf.download() fallback for {ticker_str}")
+        print(f"[数据获取] 尝试 yf.download() 回退...")
+        start_time = time.time()
         try:
             df = yf.download(ticker_str, start=start_date, end=end_date, progress=False, auto_adjust=True)
+            duration_ms = (time.time() - start_time) * 1000
+            
+            if df is not None and not df.empty:
+                DataFetchLogger.log_attempt(
+                    source="yfinance:download",
+                    symbol=ticker_str,
+                    start_time=start_time,
+                    success=True,
+                    duration_ms=duration_ms,
+                    details={"bars_count": len(df)}
+                )
+            else:
+                DataFetchLogger.log_attempt(
+                    source="yfinance:download",
+                    symbol=ticker_str,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=duration_ms,
+                    error="返回空数据"
+                )
+                return None
         except Exception as exc:
-            print(f"[stock_data] yf.download() fallback failed for {ticker_str}: {exc}")
+            duration_ms = (time.time() - start_time) * 1000
+            DataFetchLogger.log_attempt(
+                source="yfinance:download",
+                symbol=ticker_str,
+                start_time=start_time,
+                success=False,
+                duration_ms=duration_ms,
+                error=str(exc)
+            )
             return None
 
     if df is None or df.empty:
-        print(f"[stock_data] no data for {ticker_str} between {start_date} and {end_date}")
+        DataFetchLogger.log_attempt(
+            source="yfinance",
+            symbol=ticker_str,
+            start_time=time.time(),
+            success=False,
+            duration_ms=0,
+            error=f"无数据 ({start_date} to {end_date})"
+        )
         return None
 
     # Normalize columns
@@ -257,6 +595,14 @@ def _us_ohlcv(symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFr
     wanted = ["date", "open", "high", "low", "close", "volume"]
     keep = [c for c in wanted if c in df.columns]
     if "close" not in keep:
+        DataFetchLogger.log_attempt(
+            source="yfinance",
+            symbol=ticker_str,
+            start_time=time.time(),
+            success=False,
+            duration_ms=0,
+            error="缺少必要列 (close)"
+        )
         return None
 
     return df[keep].copy()
@@ -265,28 +611,97 @@ def _us_ohlcv(symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFr
 def _cn_ohlcv_akshare(symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """A-share OHLCV via akshare with retry + intraday aggregation fallback."""
     if ak is None:
+        DataFetchLogger.log_attempt(
+            source="akshare",
+            symbol=symbol,
+            start_time=time.time(),
+            success=False,
+            duration_ms=0,
+            error="akshare 未安装"
+        )
         return None
+    
     sd = start_date.replace("-", "")
     ed = end_date.replace("-", "")
 
-    for attempt in range(3):
+    for attempt in range(5):
+        start_time = time.time()
         try:
             df = ak.stock_zh_a_hist(symbol.strip(), "daily", sd, ed, "qfq")
+            duration_ms = (time.time() - start_time) * 1000
+            
             if df is not None and not df.empty:
                 df = _normalise_columns(df)
                 wanted = ["date", "open", "high", "low", "close", "volume", "amount"]
                 keep = [c for c in wanted if c in df.columns]
                 if "close" in keep:
-                    return df[keep].copy()
-                return None
+                    result_df = df[keep].copy()
+                    DataFetchLogger.log_attempt(
+                        source=f"akshare:daily",
+                        symbol=symbol,
+                        start_time=start_time,
+                        success=True,
+                        duration_ms=duration_ms,
+                        details={
+                            "attempt": attempt + 1,
+                            "bars_count": len(result_df),
+                            "date_range": f"{result_df['date'].iloc[0]} to {result_df['date'].iloc[-1]}" if len(result_df) > 0 else "N/A"
+                        }
+                    )
+                    return result_df
+                else:
+                    DataFetchLogger.log_attempt(
+                        source=f"akshare:daily",
+                        symbol=symbol,
+                        start_time=start_time,
+                        success=False,
+                        duration_ms=duration_ms,
+                        error="缺少必要列 (close)",
+                        details={"attempt": attempt + 1, "columns": list(df.columns)}
+                    )
+                    return None
+            else:
+                DataFetchLogger.log_attempt(
+                    source=f"akshare:daily",
+                    symbol=symbol,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=duration_ms,
+                    error="返回空数据",
+                    details={"attempt": attempt + 1}
+                )
         except Exception as exc:
-            print(f"[stock_data] akshare error {symbol} (attempt {attempt+1}/3): {exc}")
-            if attempt < 2:
-                time.sleep(min(1.5 ** attempt, 10))
+            duration_ms = (time.time() - start_time) * 1000
+            DataFetchLogger.log_attempt(
+                source=f"akshare:daily",
+                symbol=symbol,
+                start_time=start_time,
+                success=False,
+                duration_ms=duration_ms,
+                error=str(exc),
+                details={"attempt": attempt + 1}
+            )
+            if attempt < 4:
+                sleep_time = min(2 ** attempt, 15)
+                print(f"[数据获取] akshare 重试等待 {sleep_time}s...")
+                time.sleep(sleep_time)
+
+    DataFetchLogger.log_attempt(
+        source="akshare:daily",
+        symbol=symbol,
+        start_time=time.time(),
+        success=False,
+        duration_ms=0,
+        error="所有重试均失败"
+    )
 
     # Intraday minute aggregation fallback
+    print(f"[数据获取] 尝试 akshare 分时数据回退...")
+    start_time = time.time()
     try:
         df_min = ak.stock_zh_a_hist_min_em(symbol.strip(), "5", sd, ed, "qfq")
+        duration_ms = (time.time() - start_time) * 1000
+        
         if df_min is not None and not df_min.empty:
             df_min = _normalise_columns(df_min)
             if "date" in df_min.columns and "close" in df_min.columns:
@@ -295,25 +710,97 @@ def _cn_ohlcv_akshare(symbol: str, start_date: str, end_date: str) -> Optional[p
                     open=("open", "first"), high=("high", "max"), low=("low", "min"),
                     close=("close", "last"), volume=("volume", "sum"), amount=("amount", "sum"),
                 ).reset_index().rename(columns={"date_only": "date"})
-                print(f"[stock_data] intraday aggregate fallback OK for {symbol}")
+                
+                DataFetchLogger.log_attempt(
+                    source="akshare:intraday_fallback",
+                    symbol=symbol,
+                    start_time=start_time,
+                    success=True,
+                    duration_ms=duration_ms,
+                    details={"bars_count": len(agg)}
+                )
                 return agg
+            else:
+                DataFetchLogger.log_attempt(
+                    source="akshare:intraday_fallback",
+                    symbol=symbol,
+                    start_time=start_time,
+                    success=False,
+                    duration_ms=duration_ms,
+                    error="缺少必要列"
+                )
+        else:
+            DataFetchLogger.log_attempt(
+                source="akshare:intraday_fallback",
+                symbol=symbol,
+                start_time=start_time,
+                success=False,
+                duration_ms=duration_ms,
+                error="返回空数据"
+            )
     except Exception as exc:
-        print(f"[stock_data] intraday fallback also failed: {exc}")
+        duration_ms = (time.time() - start_time) * 1000
+        DataFetchLogger.log_attempt(
+            source="akshare:intraday_fallback",
+            symbol=symbol,
+            start_time=start_time,
+            success=False,
+            duration_ms=duration_ms,
+            error=str(exc)
+        )
+    
     return None
 
 
 def _cn_ohlcv_yfinance(symbol: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """A-share OHLCV via yfinance (last resort for CN stocks)."""
     if yf is None:
+        DataFetchLogger.log_attempt(
+            source="yfinance",
+            symbol=symbol,
+            start_time=time.time(),
+            success=False,
+            duration_ms=0,
+            error="yfinance 未安装"
+        )
         return None
+    
     ticker_str = to_yfinance_ticker(symbol, "cn")
+    start_time = time.time()
+    
     try:
         df = _us_ohlcv(ticker_str, start_date, end_date)
+        duration_ms = (time.time() - start_time) * 1000
+        
         if df is not None and not df.empty:
-            print(f"[stock_data] yfinance fallback OK for {ticker_str}")
+            DataFetchLogger.log_attempt(
+                source="yfinance:cn_fallback",
+                symbol=ticker_str,
+                start_time=start_time,
+                success=True,
+                duration_ms=duration_ms,
+                details={"bars_count": len(df)}
+            )
             return df
+        else:
+            DataFetchLogger.log_attempt(
+                source="yfinance:cn_fallback",
+                symbol=ticker_str,
+                start_time=start_time,
+                success=False,
+                duration_ms=duration_ms,
+                error="返回空数据"
+            )
     except Exception as exc:
-        print(f"[stock_data] yfinance fallback error for {ticker_str}: {exc}")
+        duration_ms = (time.time() - start_time) * 1000
+        DataFetchLogger.log_attempt(
+            source="yfinance:cn_fallback",
+            symbol=ticker_str,
+            start_time=start_time,
+            success=False,
+            duration_ms=duration_ms,
+            error=str(exc)
+        )
     return None
 
 

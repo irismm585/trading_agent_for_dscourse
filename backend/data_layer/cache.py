@@ -2,7 +2,7 @@
 
 import time
 import threading
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 
 class TTLCache:
@@ -13,7 +13,7 @@ class TTLCache:
         self._data: dict[str, tuple[float, Any]] = {}
         self._lock = threading.Lock()
 
-    def get(self, key: str) -> Any | None:
+    def get(self, key: str) -> Optional[Any]:
         with self._lock:
             entry = self._data.get(key)
             if entry is None:
@@ -24,12 +24,12 @@ class TTLCache:
                 return None
             return value
 
-    def set(self, key: str, value: Any, ttl: float | None = None) -> None:
+    def set(self, key: str, value: Any, ttl: Optional[float] = None) -> None:
         expires_at = time.time() + (ttl if ttl is not None else self._default_ttl)
         with self._lock:
             self._data[key] = (expires_at, value)
 
-    def get_or_set(self, key: str, factory: Callable[[], Any], ttl: float | None = None) -> Any:
+    def get_or_set(self, key: str, factory: Callable[[], Any], ttl: Optional[float] = None) -> Any:
         existing = self.get(key)
         if existing is not None:
             return existing

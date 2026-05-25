@@ -162,7 +162,7 @@ class SessionManager:
 
     def create(self, symbol: str, trade_date: str, market: str = "cn",
                max_debate_rounds: int = 1,
-               config: dict[str, Any] | None = None) -> SessionData:
+               config: Optional[dict[str, Any]] = None) -> SessionData:
         """Create a new analysis session."""
         session_id = str(uuid.uuid4())
         session = SessionData(
