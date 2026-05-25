@@ -37,20 +37,64 @@ class DataPipeline:
     
     This class wraps data fetching functions with automatic validation
     at each step, ensuring data quality before the data is used.
+    
+    Configuration Presets:
+        - PRODUCTION: 严格模式，最小20行，最多5%无效
+        - BACKTEST:   严格模式，最小60行，最多2%无效
+        - DEVELOPMENT:宽松模式，最小5行，最多20%无效
     """
     
-    # Validation thresholds
-    _MIN_OHLCV_ROWS = 5
-    _ACCEPTABLE_INVALID_ROW_RATIO = 0.1  # 10% max invalid
+    # Validation presets
+    PRESETS = {
+        "PRODUCTION": {
+            "min_ohlcv_rows": 20,
+            "max_invalid_ratio": 0.05,
+            "strict_validation": True
+        },
+        "BACKTEST": {
+            "min_ohlcv_rows": 60,
+            "max_invalid_ratio": 0.02,
+            "strict_validation": True
+        },
+        "DEVELOPMENT": {
+            "min_ohlcv_rows": 5,
+            "max_invalid_ratio": 0.20,
+            "strict_validation": False
+        }
+    }
     
-    def __init__(self, strict_validation: bool = True):
+    # Default to production settings (best practice)
+    DEFAULT_CONFIG = PRESETS["PRODUCTION"]
+    
+    def __init__(
+        self,
+        strict_validation: bool = None,
+        min_ohlcv_rows: int = None,
+        max_invalid_ratio: float = None,
+        preset: str = None
+    ):
         """Initialize the data pipeline.
         
         Args:
             strict_validation: If True, raise exceptions on validation failures
                               rather than just returning warnings
+            min_ohlcv_rows: Minimum required OHLCV data rows
+            max_invalid_ratio: Maximum allowed invalid row ratio (0.0-1.0)
+            preset: Use a preset configuration ("PRODUCTION", "BACKTEST", "DEVELOPMENT")
+                   If provided, overrides individual parameters
         """
-        self.strict_validation = strict_validation
+        # Apply preset if specified
+        if preset is not None and preset in self.PRESETS:
+            config = self.PRESETS[preset]
+            self.strict_validation = config["strict_validation"]
+            self.min_ohlcv_rows = config["min_ohlcv_rows"]
+            self.max_invalid_ratio = config["max_invalid_ratio"]
+        else:
+            # Use defaults and allow overrides
+            self.strict_validation = strict_validation if strict_validation is not None else self.DEFAULT_CONFIG["strict_validation"]
+            self.min_ohlcv_rows = min_ohlcv_rows if min_ohlcv_rows is not None else self.DEFAULT_CONFIG["min_ohlcv_rows"]
+            self.max_invalid_ratio = max_invalid_ratio if max_invalid_ratio is not None else self.DEFAULT_CONFIG["max_invalid_ratio"]
+        
         self._validation_logs = []
     
     def log_validation(self, step: str, symbol: str, success: bool, 
@@ -97,17 +141,17 @@ class DataPipeline:
         report["ohlcv_details"] = ohlcv_report
         
         # Check minimum row count
-        if len(df) < self._MIN_OHLCV_ROWS:
-            report["warnings"].append(
-                f"Data has only {len(df)} rows, below minimum recommended {self._MIN_OHLCV_ROWS}"
+        if len(df) < self.min_ohlcv_rows:
+            report["errors"].append(
+                f"Data has only {len(df)} rows, below minimum required {self.min_ohlcv_rows}"
             )
         
         # Check invalid row ratio
         if len(ohlcv_report["invalid_rows"]) > 0:
             invalid_ratio = len(ohlcv_report["invalid_rows"]) / len(df)
-            if invalid_ratio > self._ACCEPTABLE_INVALID_ROW_RATIO:
+            if invalid_ratio > self.max_invalid_ratio:
                 report["errors"].append(
-                    f"Invalid row ratio {invalid_ratio:.1%} exceeds threshold {self._ACCEPTABLE_INVALID_ROW_RATIO:.1%}"
+                    f"Invalid row ratio {invalid_ratio:.1%} exceeds threshold {self.max_invalid_ratio:.1%}"
                 )
             else:
                 report["warnings"].append(
@@ -303,23 +347,63 @@ class DataPipeline:
 _pipeline_instance: Optional[DataPipeline] = None
 
 
-def get_pipeline(strict: bool = True) -> DataPipeline:
-    """Get or create a DataPipeline singleton instance."""
+def get_pipeline(strict: bool = None, preset: str = None) -> DataPipeline:
+    """Get or create a DataPipeline singleton instance.
+    
+    Args:
+        strict: Whether to use strict validation (deprecated, use preset)
+        preset: Configuration preset to use ("PRODUCTION", "BACKTEST", "DEVELOPMENT")
+    """
     global _pipeline_instance
     if _pipeline_instance is None:
-        _pipeline_instance = DataPipeline(strict_validation=strict)
+        if preset is not None:
+            _pipeline_instance = DataPipeline(preset=preset)
+        elif strict is not None:
+            _pipeline_instance = DataPipeline(strict_validation=strict)
+        else:
+            _pipeline_instance = DataPipeline()  # Use production defaults
     return _pipeline_instance
 
 
-def validated_data_fetch(symbol: str, trade_date: str, market: str = "cn",
-                        lookback_days: int = 365, strict: bool = True) -> Dict[str, Any]:
-    """Convenience function for validated data fetching."""
-    pipeline = get_pipeline(strict=strict)
+def validated_data_fetch(
+    symbol: str,
+    trade_date: str,
+    market: str = "cn",
+    lookback_days: int = 365,
+    strict: bool = None,
+    preset: str = None
+) -> Dict[str, Any]:
+    """Convenience function for validated data fetching.
+    
+    Args:
+        symbol: Stock symbol
+        trade_date: End date for data
+        market: Market (cn or us)
+        lookback_days: Number of days to look back
+        strict: Deprecated, use preset
+        preset: Configuration preset ("PRODUCTION", "BACKTEST", "DEVELOPMENT")
+    """
+    pipeline = DataPipeline(strict_validation=strict, preset=preset)
     return pipeline.fetch_validated_data(symbol, trade_date, market, lookback_days)
 
 
-def validated_ohlcv_fetch(symbol: str, start_date: str, end_date: str,
-                        market: str = "cn", strict: bool = True) -> Dict[str, Any]:
-    """Convenience function for validated OHLCV fetching."""
-    pipeline = get_pipeline(strict=strict)
+def validated_ohlcv_fetch(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    market: str = "cn",
+    strict: bool = None,
+    preset: str = None
+) -> Dict[str, Any]:
+    """Convenience function for validated OHLCV fetching.
+    
+    Args:
+        symbol: Stock symbol
+        start_date: Start date
+        end_date: End date
+        market: Market (cn or us)
+        strict: Deprecated, use preset
+        preset: Configuration preset ("PRODUCTION", "BACKTEST", "DEVELOPMENT")
+    """
+    pipeline = DataPipeline(strict_validation=strict, preset=preset)
     return pipeline.fetch_only_ohlcv(symbol, start_date, end_date, market)
