@@ -1,6 +1,4 @@
-# 数据转换器优化记录
-
-## 📋 概述
+# 📝 数据转换器优化记录
 
 本文档记录了 `backend/utils/data_converters.py` 模块的所有优化历史，包括功能改进、性能提升和代码重构。
 
@@ -15,7 +13,7 @@
 ### 📝 详细改进
 
 #### 1. 添加常量定义 - 消除魔法字符串
-- **文件**: [`backend/utils/data_converters.py`](file:///Users/bytedance/Documents/trae_projects/trading_agent_finance/backend/utils/data_converters.py)
+- **文件**: [`backend/utils/data_converters.py`](../backend/utils/data_converters.py)
 - **变更位置**: 第 25-34 行
 - **内容**:
   ```python
@@ -30,7 +28,7 @@
   ```
 
 #### 2. 预编译正则表达式 - 性能提升
-- **文件**: [`backend/utils/data_converters.py`](file:///Users/bytedance/Documents/trae_projects/trading_agent_finance/backend/utils/data_converters.py)
+- **文件**: [`backend/utils/data_converters.py`](../backend/utils/data_converters.py)
 - **变更位置**: `LLMResponseParser` 类（第 517-519 行）
 - **内容**:
   ```python
@@ -41,7 +39,7 @@
   ```
 
 #### 3. 简化 RATING_MAPPING 映射表
-- **文件**: [`backend/utils/data_converters.py`](file:///Users/bytedance/Documents/trae_projects/trading_agent_finance/backend/utils/data_converters.py)
+- **文件**: [`backend/utils/data_converters.py`](../backend/utils/data_converters.py)
 - **变更位置**: 第 522-533 行
 - **改进**:
   - 移除了重复的英文大小写映射（如 'Buy' 和 'buy'）
@@ -49,7 +47,7 @@
   - 减少了映射表的大小，提升查询效率
 
 #### 4. 添加 MarketDataNormalizer 参数验证
-- **文件**: [`backend/utils/data_converters.py`](file:///Users/bytedance/Documents/trae_projects/trading_agent_finance/backend/utils/data_converters.py)
+- **文件**: [`backend/utils/data_converters.py`](../backend/utils/data_converters.py)
 - **变更位置**: `normalize_ohlcv()` 方法（第 98-101 行）
 - **内容**:
   ```python
@@ -61,21 +59,21 @@
   ```
 
 #### 5. 优化 LLMResponseParser._clean_dirty_text
-- **文件**: [`backend/utils/data_converters.py`](file:///Users/bytedance/Documents/trae_projects/trading_agent_finance/backend/utils/data_converters.py)
+- **文件**: [`backend/utils/data_converters.py`](../backend/utils/data_converters.py)
 - **变更位置**: 第 569-584 行
 - **改进**:
   - 简化了乱码处理逻辑，直接移除所有 'D' 字符
   - 移除了重复的正则表达式调用
 
 #### 6. 更新 ChartDataConverter 使用常量
-- **文件**: [`backend/utils/data_converters.py`](file:///Users/bytedance/Documents/trae_projects/trading_agent_finance/backend/utils/data_converters.py)
+- **文件**: [`backend/utils/data_converters.py`](../backend/utils/data_converters.py)
 - **变更位置**: `dataframe_to_ohlc()` 方法（第 360-392 行）
 - **改进**:
   - 使用预定义常量替代硬编码字符串
   - 添加了图表类型验证逻辑
 
 #### 7. 优化 _normalize_rating() 方法
-- **文件**: [`backend/utils/data_converters.py`](file:///Users/bytedance/Documents/trae_projects/trading_agent_finance/backend/utils/data_converters.py)
+- **文件**: [`backend/utils/data_converters.py`](../backend/utils/data_converters.py)
 - **变更位置**: 第 789-823 行
 - **改进**:
   - 统一使用小写查找，提升匹配效率
@@ -84,10 +82,13 @@
 ### 📊 优化效果
 
 #### 测试结果
-- **pytest 单元测试**: 29 个通过 ✅
-- **数据转换器测试**: 15 个通过 ✅
-- **LLM 解析器测试**: 29 个通过 ✅
-- **总测试总数**: 73 个，通过率 100%
+
+| 测试套件 | 测试数 | 通过数 | 失败数 | 通过率 |
+|----------|--------|--------|--------|--------|
+| pytest 单元测试 | 29 | 29 | 0 | 100% ✅ |
+| 数据转换器测试 | 15 | 15 | 0 | 100% ✅ |
+| LLM 解析器测试 | 29 | 29 | 0 | 100% ✅ |
+| **总计** | **73** | **73** | **0** | **100%** 🎉 |
 
 #### 性能提升
 - 正则表达式使用预编译，避免重复编译开销
@@ -216,7 +217,7 @@ git show 2f85dc6  # 测试添加
 
 ---
 
-### 更新日志
+## 📅 更新日志
 
 | 日期 | 版本 | 说明 | 作者 |
 |------|------|------|------|
