@@ -1345,6 +1345,13 @@ class BatchDataValidator:
             'extra_columns': []
         }
         
+        # 类型兼容性映射（numpy类型到Python类型的兼容关系）
+        type_compatibility = {
+            int: (int, np.integer),
+            float: (float, np.floating),
+            str: (str, np.str_, np.object_)
+        }
+        
         # 检查缺失的列
         for col, dtype in expected_schema.items():
             if col not in df.columns:
@@ -1355,12 +1362,24 @@ class BatchDataValidator:
             if col in df.columns:
                 # 简单类型检查
                 sample = df[col].iloc[0] if len(df) > 0 else None
-                if sample is not None and not isinstance(sample, dtype):
-                    report['type_mismatches'].append({
-                        'column': col,
-                        'expected': dtype.__name__,
-                        'got': type(sample).__name__
-                    })
+                if sample is not None:
+                    # 检查类型兼容性
+                    compatible = False
+                    if isinstance(sample, dtype):
+                        compatible = True
+                    elif dtype in type_compatibility:
+                        # 检查是否是兼容的numpy类型
+                        for compatible_type in type_compatibility[dtype]:
+                            if isinstance(sample, compatible_type):
+                                compatible = True
+                                break
+                    # 如果不兼容，报告错误
+                    if not compatible:
+                        report['type_mismatches'].append({
+                            'column': col,
+                            'expected': dtype.__name__,
+                            'got': type(sample).__name__
+                        })
         
         # 检查额外的列
         extra_cols = set(df.columns) - set(expected_schema.keys())
