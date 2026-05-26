@@ -382,6 +382,14 @@ def get_mock_data_bundle(symbol: str, trade_date: str, market: str) -> dict:
     ohlcv_text = format_ohlcv_summary(ohlcv_df)
     ind_text = format_indicators_summary(indicators)
 
+    # Validate data quality (consistent with real data)
+    validation_report = {
+        "ohlcv_valid": True,
+        "financial_valid": True,
+        "warnings": [],
+        "errors": [],
+    }
+    
     result = {
         "ohlcv_df": ohlcv_df,
         "ohlcv_json": ohlcv_json,
@@ -401,6 +409,7 @@ def get_mock_data_bundle(symbol: str, trade_date: str, market: str) -> dict:
         "search_text": search_text,
         "financial_metrics": financial_metrics,
         "market": market,
+        "validation_report": validation_report,
     }
 
     print(f"[mock_data] Generated mock bundle for {symbol} ({market})")

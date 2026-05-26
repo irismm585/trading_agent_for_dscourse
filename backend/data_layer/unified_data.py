@@ -52,6 +52,7 @@ from backend.data_layer.anysearch import (
 )
 from backend.config import get_config
 from backend.data_layer.mock_data import get_mock_data_bundle
+from backend.utils.data_converters import BatchDataValidator
 
 
 # ── Market-aware data fetchers ─────────────────────────────────────
@@ -385,6 +386,40 @@ def _fetch_us_bundle(symbol: str, start_date: str, trade_date: str, lookback_day
     if search_results:
         search_text = format_search_summary(search_results, symbol)
 
+    # Validate data quality (new feature)
+    validation_report = {
+        "ohlcv_valid": True,
+        "financial_valid": True,
+        "warnings": [],
+        "errors": [],
+    }
+    
+    try:
+        # OHLCV validation - BatchDataValidator returns a single dict
+        if ohlcv_df is not None and not ohlcv_df.empty:
+            ohlcv_report = BatchDataValidator.validate_ohlcv_data(ohlcv_df, strict=False)
+            validation_report["ohlcv_report"] = ohlcv_report
+            validation_report["ohlcv_valid"] = len(ohlcv_report.get("errors", [])) == 0
+            if ohlcv_report.get("errors"):
+                validation_report["errors"].extend(ohlcv_report["errors"])
+            if ohlcv_report.get("warnings"):
+                validation_report["warnings"].extend(ohlcv_report["warnings"])
+        else:
+            validation_report["ohlcv_valid"] = False
+            validation_report["errors"].append("OHLCV data is None or empty")
+            
+        # Financial metrics validation - BatchDataValidator returns a single dict
+        fin_report = BatchDataValidator.validate_financial_data(financial_metrics, strict=False)
+        validation_report["financial_report"] = fin_report
+        validation_report["financial_valid"] = fin_report.get("valid", False)
+        if fin_report.get("errors"):
+            validation_report["errors"].extend(fin_report["errors"])
+        if fin_report.get("warnings"):
+            validation_report["warnings"].extend(fin_report["warnings"])
+    except Exception as e:
+        print(f"[unified_data] validation error for {symbol}: {e}")
+        validation_report["errors"].append(f"validation failed: {str(e)}")
+
     result = {
         "ohlcv_df": ohlcv_df, "ohlcv_json": ohlcv_json,
         "profile": profile, "index_data": index_data,
@@ -395,6 +430,7 @@ def _fetch_us_bundle(symbol: str, start_date: str, trade_date: str, lookback_day
         "financial_text": fin_text, "news_text": news_text,
         "sentiment_text": sent_text, "search_text": search_text,
         "financial_metrics": financial_metrics, "market": "us",
+        "validation_report": validation_report,
     }
 
     # Cache it
@@ -486,6 +522,40 @@ def fetch_all_data(symbol: str, trade_date: str, market: str = "cn", lookback_da
 
     ohlcv_json = ohlcv_to_json(ohlcv_df)
 
+    # Validate data quality (new feature)
+    validation_report = {
+        "ohlcv_valid": True,
+        "financial_valid": True,
+        "warnings": [],
+        "errors": [],
+    }
+    
+    try:
+        # OHLCV validation - BatchDataValidator returns a single dict
+        if ohlcv_df is not None and not ohlcv_df.empty:
+            ohlcv_report = BatchDataValidator.validate_ohlcv_data(ohlcv_df, strict=False)
+            validation_report["ohlcv_report"] = ohlcv_report
+            validation_report["ohlcv_valid"] = len(ohlcv_report.get("errors", [])) == 0
+            if ohlcv_report.get("errors"):
+                validation_report["errors"].extend(ohlcv_report["errors"])
+            if ohlcv_report.get("warnings"):
+                validation_report["warnings"].extend(ohlcv_report["warnings"])
+        else:
+            validation_report["ohlcv_valid"] = False
+            validation_report["errors"].append("OHLCV data is None or empty")
+            
+        # Financial metrics validation - BatchDataValidator returns a single dict
+        fin_report = BatchDataValidator.validate_financial_data(financial_metrics, strict=False)
+        validation_report["financial_report"] = fin_report
+        validation_report["financial_valid"] = fin_report.get("valid", False)
+        if fin_report.get("errors"):
+            validation_report["errors"].extend(fin_report["errors"])
+        if fin_report.get("warnings"):
+            validation_report["warnings"].extend(fin_report["warnings"])
+    except Exception as e:
+        print(f"[unified_data] validation error for {symbol}: {e}")
+        validation_report["errors"].append(f"validation failed: {str(e)}")
+
     result = {
         "ohlcv_df": ohlcv_df, "ohlcv_json": ohlcv_json,
         "profile": profile, "index_data": index_data,
@@ -495,6 +565,7 @@ def fetch_all_data(symbol: str, trade_date: str, market: str = "cn", lookback_da
         "ohlcv_text": ohlcv_text, "indicators_text": ind_text,
         "financial_text": fin_text, "news_text": news_text,
         "sentiment_text": sent_text, "financial_metrics": financial_metrics, "market": market,
+        "validation_report": validation_report,
     }
 
     data_cache.set(cache_key, result)
